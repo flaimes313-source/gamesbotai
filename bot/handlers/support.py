@@ -17,11 +17,15 @@ logger = get_logger(__name__)
 PENDING_TICKET: dict[int, bool] = {}
 
 
+# ============================================================
+# Клавиатуры
+# ============================================================
 def support_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Написать в поддержку", callback_data="support_write")],
             [InlineKeyboardButton(text="📖 FAQ", callback_data="support_faq")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
         ]
     )
 
@@ -34,8 +38,11 @@ def faq_back_kb() -> InlineKeyboardMarkup:
     )
 
 
+# ============================================================
+# REPLY-КНОПКА «🆘 Поддержка»
+# ============================================================
 @router.message(F.text == "🆘 Поддержка")
-async def support_msg(message: Message):
+async def support_from_menu(message: Message):
     await message.answer(
         "🆘 <b>Поддержка</b>\n\n"
         "Выбери действие:",
@@ -43,13 +50,17 @@ async def support_msg(message: Message):
     )
 
 
+# ============================================================
+# CALLBACK-ХЕНДЛЕРЫ
+# ============================================================
 @router.callback_query(F.data == "support_menu")
 async def cb_support_menu(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.edit_text(
-        "🆘 <b>Поддержка</b>\n\nВыбери действие:",
-        reply_markup=support_menu_kb(),
-    )
+    text = "🆘 <b>Поддержка</b>\n\nВыбери действие:"
+    try:
+        await callback.message.edit_text(text, reply_markup=support_menu_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=support_menu_kb())
 
 
 @router.callback_query(F.data == "support_write")
@@ -72,10 +83,10 @@ async def cb_support_faq(callback: CallbackQuery):
         "<b>Это правда анализ личности?</b>\n"
         "Нет. Это развлекательная интерпретация вайба фото.\n\n"
         "<b>Как найти других игроков?</b>\n"
-        "🎯 Найти игроков → выбери режим поиска.\n\n"
+        "«🎯 Найти игроков» → выбери режим поиска.\n\n"
         "<b>Как выйти из игры?</b>\n"
-        "🎮 Социальная игра → Выйти из игры.\n\n"
-        "<b>Как удалить данные?</b>\n"
+        "«🎮 Социальная игра» → «Выйти из игры».\n\n"
+        "<b>Как удалить свои данные?</b>\n"
         "Напиши в поддержку — удалим."
     )
     try:
@@ -84,10 +95,17 @@ async def cb_support_faq(callback: CallbackQuery):
         await callback.message.answer(text, reply_markup=faq_back_kb())
 
 
+# ============================================================
+# CATCH-ALL ДЛЯ ТИКЕТОВ — В САМОМ КОНЦЕ
+# ============================================================
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_support_message(message: Message):
+    """
+    Обрабатывает текст пользователя, если он ждёт отправки тикета.
+    Если не ждёт — ничего не делает, и другие роутеры получат шанс.
+    """
     if not PENDING_TICKET.get(message.from_user.id):
-        return  # не наш случай
+        return
 
     PENDING_TICKET.pop(message.from_user.id, None)
 
@@ -97,7 +115,6 @@ async def handle_support_message(message: Message):
         )).scalar_one_or_none()
 
         if user is None:
-            # Создаём пользователя, если ещё нет
             user = User(
                 telegram_id=message.from_user.id,
                 username=message.from_user.username,
@@ -117,8 +134,8 @@ async def handle_support_message(message: Message):
         await session.refresh(ticket)
 
     await message.answer(
-        f"✅ Тикет #{ticket.id} создан.\n"
-        "Ответ придёт в этот чат от админа."
+        f"✅ <b>Тикет #{ticket.id} создан.</b>\n\n"
+        f"Ответ придёт сюда от администратора."
     )
 
     # Уведомляем админов
