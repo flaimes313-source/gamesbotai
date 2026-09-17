@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
@@ -12,9 +10,14 @@ from utils.logging import get_logger
 router = Router()
 logger = get_logger(__name__)
 
-
-# Ожидание текста тикета: telegram_id → True
 PENDING_TICKET: dict[int, bool] = {}
+
+
+# ============================================================
+# Фильтр: срабатываем ТОЛЬКО если пользователь ждёт отправки тикета
+# ============================================================
+def _is_waiting_ticket(message: Message) -> bool:
+    return PENDING_TICKET.get(message.from_user.id, False)
 
 
 # ============================================================
@@ -43,6 +46,7 @@ def faq_back_kb() -> InlineKeyboardMarkup:
 # ============================================================
 @router.message(F.text == "🆘 Поддержка")
 async def support_from_menu(message: Message):
+    logger.info(f"Support button pressed by {message.from_user.id}")
     await message.answer(
         "🆘 <b>Поддержка</b>\n\n"
         "Выбери действие:",
@@ -51,7 +55,7 @@ async def support_from_menu(message: Message):
 
 
 # ============================================================
-# CALLBACK-ХЕНДЛЕРЫ
+# CALLBACK-И
 # ============================================================
 @router.callback_query(F.data == "support_menu")
 async def cb_support_menu(callback: CallbackQuery):
@@ -69,7 +73,8 @@ async def cb_support_write(callback: CallbackQuery):
     PENDING_TICKET[callback.from_user.id] = True
     await callback.message.answer(
         "✍️ Напиши свой вопрос одним сообщением.\n"
-        "Мы передадим его в поддержку, и ответ придёт сюда же."
+        "Мы передадим его в поддержку, и ответ придёт сюда же.\n\n"
+        "Чтобы отменить — отправь /cancel"
     )
 
 
@@ -96,14 +101,21 @@ async def cb_support_faq(callback: CallbackQuery):
 
 
 # ============================================================
-# CATCH-ALL ДЛЯ ТИКЕТОВ — В САМОМ КОНЦЕ
+# /cancel — отмена тикета
 # ============================================================
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text == "/cancel")
+async def cmd_cancel(message: Message):
+    if PENDING_TICKET.pop(message.from_user.id, False):
+        await message.answer("❌ Отменено. Тикет не создан.")
+    else:
+        await message.answer("Нечего отменять.")
+
+
+# ============================================================
+# CATCH-ALL — срабатывает ТОЛЬКО при активном ожидании тикета
+# ============================================================
+@router.message(F.text & ~F.text.startswith("/"), _is_waiting_ticket)
 async def handle_support_message(message: Message):
-    """
-    Обрабатывает текст пользователя, если он ждёт отправки тикета.
-    Если не ждёт — ничего не делает, и другие роутеры получат шанс.
-    """
     if not PENDING_TICKET.get(message.from_user.id):
         return
 
@@ -138,7 +150,6 @@ async def handle_support_message(message: Message):
         f"Ответ придёт сюда от администратора."
     )
 
-    # Уведомляем админов
     for admin_id in config.ADMIN_IDS:
         try:
             await message.bot.send_message(

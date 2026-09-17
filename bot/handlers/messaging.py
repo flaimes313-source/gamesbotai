@@ -23,6 +23,16 @@ logger = get_logger(__name__)
 PENDING_REPLY: dict[int, int] = {}
 
 
+# ============================================================
+# Фильтр: срабатываем ТОЛЬКО если пользователь ждёт отправки сообщения
+# ============================================================
+def _is_waiting_reply(message: Message) -> bool:
+    return PENDING_REPLY.get(message.from_user.id) is not None
+
+
+# ============================================================
+# Клавиатуры
+# ============================================================
 def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -46,7 +56,7 @@ def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# REPLY: ВХОДЯЩИЕ  (должен быть ВЫШЕ catch-all)
+# REPLY: ВХОДЯЩИЕ
 # ============================================================
 @router.message(F.text == "📬 Входящие")
 async def show_inbox(message: Message):
@@ -101,7 +111,8 @@ async def cb_style_custom(callback: CallbackQuery):
     target_id = int(callback.data.replace("style_custom_", ""))
     PENDING_REPLY[callback.from_user.id] = target_id
     await callback.message.answer(
-        "✍️ Напиши своё сообщение одним текстом. Оно будет доставлено получателю."
+        "✍️ Напиши своё сообщение одним текстом. Оно будет доставлено получателю.\n\n"
+        "Чтобы отменить — отправь /cancel"
     )
 
 
@@ -254,17 +265,23 @@ async def cb_jokecat(callback: CallbackQuery):
 
 
 # ============================================================
-# CATCH-ALL — В САМОМ КОНЦЕ ФАЙЛА!
+# /cancel — отмена отправки сообщения
 # ============================================================
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text == "/cancel")
+async def cmd_cancel(message: Message):
+    if PENDING_REPLY.pop(message.from_user.id, None) is not None:
+        await message.answer("❌ Отменено. Сообщение не отправлено.")
+    else:
+        await message.answer("Нечего отменять.")
+
+
+# ============================================================
+# CATCH-ALL — срабатывает ТОЛЬКО при активном ожидании отправки
+# ============================================================
+@router.message(F.text & ~F.text.startswith("/"), _is_waiting_reply)
 async def handle_custom_text(message: Message):
-    """
-    Обрабатывает текст пользователя, если он ждёт отправки сообщения
-    другому игроку. Если не ждёт — ничего не делает (и позволяет
-    другим роутерам обработать).
-    """
     target_id = PENDING_REPLY.get(message.from_user.id)
-    if not target_id:
+    if not target_id or isinstance(target_id, str):  # защита от sugg_
         return
 
     PENDING_REPLY.pop(message.from_user.id, None)
