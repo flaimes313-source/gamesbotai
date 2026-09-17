@@ -1,22 +1,31 @@
 import asyncio
+
 from sqlalchemy import select
+
 from database.connection import async_session
 from database.models import Achievement
+
 
 ACHIEVEMENTS = [
     ("first_photo", "Первый анализ", "Загрузил первую фотографию", "📸"),
     ("first_share", "Поделился", "Поделился своим результатом", "📤"),
     ("friend_joined", "Привёл друга", "Друг зашёл по твоей ссылке", "👥"),
     ("first_test", "Первый тест", "Прошёл первый тест", "🧪"),
+    ("five_tests", "5 тестов", "Прошёл 5 тестов", "🎓"),
     ("chaos_90", "Хаос 90+", "Уровень хаоса выше 90", "🧨"),
     ("charisma_90", "Харизма 90+", "Уровень харизмы выше 90", "😎"),
     ("five_analyses", "5 анализов", "Прошёл анализ 5 раз", "🔥"),
+    ("first_match", "Первый матч", "Нашёл первого игрока", "🎯"),
+    ("ten_messages", "10 сообщений", "Отправил 10 сообщений", "💬"),
+    ("pro_first", "PRO-игрок", "Оформил первую PRO-подписку", "💎"),
 ]
 
 
 async def seed_achievements() -> None:
     async with async_session() as session:
-        existing = {a.code for a in (await session.execute(select(Achievement))).scalars().all()}
+        existing = {
+            a.code for a in (await session.execute(select(Achievement))).scalars().all()
+        }
         added = 0
         for code, title, desc, emoji in ACHIEVEMENTS:
             if code in existing:

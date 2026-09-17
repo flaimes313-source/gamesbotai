@@ -370,3 +370,23 @@ class FeatureFlag(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# ============================================================
+# EVENTS (аналитика)
+# ============================================================
+class Event(Base):
+    __tablename__ = "events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from config import config
 from database.connection import async_session
 from database.models import SubscriptionCampaign, SubscriptionEvent, User
+from services.analytics.tracker import track
 from services.subscriptions.checker import is_subscribed
 from utils.logging import get_logger
 
@@ -16,14 +17,7 @@ logger = get_logger(__name__)
 OFFER_COOLDOWN_DAYS = 7
 
 
-# ============================================================
-# ПРЕДЛОЖЕНИЕ ПОДПИСКИ (вызывается из analysis / других хуков)
-# ============================================================
 async def maybe_offer_subscription(bot, telegram_id: int) -> None:
-    """
-    Показывает оффер обязательной подписки не чаще раза в 7 дней.
-    Пропускает пользователей, которые уже подтвердили подписку.
-    """
     if not config.MANDATORY_SUBSCRIPTIONS:
         return
 
@@ -36,11 +30,9 @@ async def maybe_offer_subscription(bot, telegram_id: int) -> None:
 
         now = datetime.utcnow()
 
-        # Cooldown 7 дней
         if user.last_subscription_offer and (now - user.last_subscription_offer) < timedelta(days=OFFER_COOLDOWN_DAYS):
             return
 
-        # Берём активную кампанию
         campaign = (await session.execute(
             select(SubscriptionCampaign)
             .where(SubscriptionCampaign.is_active.is_(True))
@@ -50,7 +42,6 @@ async def maybe_offer_subscription(bot, telegram_id: int) -> None:
         if campaign is None:
             return
 
-        # Проверка: пользователь уже подтвердил подписку на эту кампанию
         existing = (await session.execute(
             select(SubscriptionEvent).where(
                 SubscriptionEvent.campaign_id == campaign.id,
@@ -62,7 +53,6 @@ async def maybe_offer_subscription(bot, telegram_id: int) -> None:
         if existing:
             return
 
-        # Обновляем cooldown
         user.last_subscription_offer = now
         await session.commit()
 
@@ -87,13 +77,11 @@ async def maybe_offer_subscription(bot, telegram_id: int) -> None:
             "Подпишись на канал партнёра, чтобы открыть функцию.",
             reply_markup=kb,
         )
+        await track("subscription_offer_shown", telegram_id=telegram_id, payload={"campaign_id": campaign.id})
     except Exception:
         logger.exception("Subscription offer send failed")
 
 
-# ============================================================
-# ПРОВЕРКА ПОДПИСКИ
-# ============================================================
 @router.callback_query(F.data.startswith("sub_check_"))
 async def cb_sub_check(callback: CallbackQuery):
     await callback.answer()
@@ -115,13 +103,11 @@ async def cb_sub_check(callback: CallbackQuery):
         await callback.message.answer("⚠️ Кампания настроена некорректно (нет channel_id).")
         return
 
-    # Проверяем подписку через Telegram API
     ok = await is_subscribed(callback.bot, callback.from_user.id, campaign.channel_id)
     if not ok:
         await callback.message.answer("❌ Пока не вижу подписку. Подпишись и попробуй снова.")
         return
 
-    # Сохраняем подтверждение
     async with async_session() as session:
         existing = (await session.execute(
             select(SubscriptionEvent).where(
@@ -148,7 +134,6 @@ async def cb_sub_check(callback: CallbackQuery):
                 confirmed_at=datetime.utcnow(),
             ))
 
-        # Обновляем счётчик в кампании
         cmp_row = (await session.execute(
             select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign.id)
         )).scalar_one_or_none()
@@ -157,4 +142,5 @@ async def cb_sub_check(callback: CallbackQuery):
 
         await session.commit()
 
+    await track("subscription_confirmed", telegram_id=callback.from_user.id, payload={"campaign_id": campaign_id})
     await callback.message.answer("🎉 Спасибо! Функция разблокирована.")

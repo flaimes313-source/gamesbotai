@@ -2,6 +2,7 @@ import io
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from sqlalchemy import func, select
 
 from bot.handlers.start import get_or_create_user
 from bot.keyboards.main import share_kb
@@ -9,6 +10,7 @@ from config import config
 from database.connection import async_session
 from database.models import PhotoAnalysis
 from services.achievements import unlock_achievement
+from services.analytics.tracker import track
 from services.analysis.photo_analysis import analyze_photo
 from services.analysis.profile_builder import build_profile
 from services.cards.generator import generate_card
@@ -43,7 +45,6 @@ def _build_result_text(analysis: dict) -> str:
 
 
 async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
-    """Хуки монетизации: обязательная подписка + реклама."""
     try:
         from bot.handlers.subscriptions import maybe_offer_subscription
         await maybe_offer_subscription(bot, telegram_id)
@@ -60,8 +61,8 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
 @router.message(F.photo)
 async def handle_photo(message: Message):
     await message.answer("🔍 Анализирую твоё фото... Это займёт несколько секунд.")
+    await track("photo_sent", telegram_id=message.from_user.id)
 
-    # 1. Скачиваем фото
     try:
         image_bytes = await _download_photo(message)
     except Exception:
@@ -69,7 +70,8 @@ async def handle_photo(message: Message):
         await message.answer("😔 Не удалось скачать фото. Попробуй ещё раз.")
         return
 
-    # 2. Анализ AI
+    await track("analysis_started", telegram_id=message.from_user.id)
+
     try:
         analysis = await analyze_photo(image_bytes)
     except Exception:
@@ -77,14 +79,14 @@ async def handle_photo(message: Message):
         await message.answer("😔 AI сейчас не смог проанализировать фото. Попробуй позже.")
         return
 
-    # 3. Сохраняем пользователя (на случай если он не жал /start)
+    await track("analysis_completed", telegram_id=message.from_user.id)
+
     user = await get_or_create_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
 
-    # 4. Сохраняем анализ + профиль
     async with async_session() as session:
         photo = message.photo[-1]
         session.add(PhotoAnalysis(
@@ -99,7 +101,7 @@ async def handle_photo(message: Message):
         session.add(profile)
         await session.commit()
 
-    # 5. Достижения
+    # Достижения
     try:
         await unlock_achievement(user.id, "first_photo")
         scores = analysis.get("scores", {}) or {}
@@ -107,13 +109,21 @@ async def handle_photo(message: Message):
             await unlock_achievement(user.id, "chaos_90")
         if scores.get("charisma", 0) >= 90:
             await unlock_achievement(user.id, "charisma_90")
+
+        # Второй анализ?
+        async with async_session() as session:
+            cnt = (await session.execute(
+                select(func.count(PhotoAnalysis.id)).where(PhotoAnalysis.user_id == user.id)
+            )).scalar_one()
+            if cnt == 2:
+                await track("second_analysis", telegram_id=message.from_user.id)
+            if cnt >= 5:
+                await unlock_achievement(user.id, "five_analyses")
     except Exception:
         logger.exception("Achievement unlock failed")
 
-    # 6. Текст результата
     result_text = _build_result_text(analysis)
 
-    # 7. Карточка
     try:
         bot_username = (await message.bot.get_me()).username
         card_bytes = generate_card(analysis, message.from_user.username, bot_username)
@@ -123,7 +133,6 @@ async def handle_photo(message: Message):
         logger.exception("Card generation failed")
         await message.answer(result_text)
 
-    # 8. Share-кнопки
     bot_username = (await message.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
     share_text = analysis.get("share_text", "Мне AI выдал смешной профиль 😂 Проверь себя!")
@@ -134,7 +143,7 @@ async def handle_photo(message: Message):
         reply_markup=share_kb(share_link),
     )
 
-    # 9. Хуки монетизации (подписка + реклама)
+    await track("share_generated", telegram_id=message.from_user.id)
     await _trigger_post_analysis_hooks(message.bot, message.from_user.id)
 
 

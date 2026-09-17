@@ -5,6 +5,7 @@ from sqlalchemy import select
 from config import config
 from database.connection import async_session
 from database.models import AdvertisingCampaign, User, UserAdEvent
+from services.analytics.tracker import track
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -13,11 +14,6 @@ AD_COOLDOWN_DAYS = 7
 
 
 async def maybe_send_ad(bot, telegram_id: int) -> bool:
-    """
-    Отправляет рекламу пользователю не чаще раза в 7 дней.
-    PRO-пользователи рекламу не получают.
-    Возвращает True, если реклама была отправлена.
-    """
     if not config.ADVERTISING_ENABLED:
         return False
 
@@ -39,7 +35,6 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if user.last_ad_received and (now - user.last_ad_received) < timedelta(days=AD_COOLDOWN_DAYS):
             return False
 
-        # Активная кампания
         campaign = (await session.execute(
             select(AdvertisingCampaign)
             .where(AdvertisingCampaign.status == "active")
@@ -50,31 +45,27 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if campaign is None:
             return False
 
-        # Лимит показов
         if campaign.impression_limit and campaign.sent_count >= campaign.impression_limit:
             return False
 
-        # Бюджет (если задан price_per_impression)
         if campaign.price_per_impression and campaign.budget:
             spent = float(campaign.price_per_impression) * campaign.sent_count
             if spent >= float(campaign.budget):
                 return False
 
-        # Отправляем
+        campaign_id = campaign.id
+        campaign_text = campaign.text
+        campaign_image = campaign.image_file_id
+
         try:
-            if campaign.image_file_id:
-                await bot.send_photo(
-                    telegram_id,
-                    campaign.image_file_id,
-                    caption=campaign.text,
-                )
+            if campaign_image:
+                await bot.send_photo(telegram_id, campaign_image, caption=campaign_text)
             else:
-                await bot.send_message(telegram_id, campaign.text)
+                await bot.send_message(telegram_id, campaign_text)
         except Exception:
             logger.exception("Ad send failed")
             return False
 
-        # Логируем событие и обновляем счётчики
         campaign.sent_count += 1
         session.add(UserAdEvent(
             campaign_id=campaign.id,
@@ -84,14 +75,14 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         user.last_ad_received = now
         await session.commit()
 
-    logger.info(f"Ad sent to {telegram_id} (campaign_id={campaign.id})")
+    await track("ad_shown", telegram_id=telegram_id, payload={"campaign_id": campaign_id})
+    logger.info(f"Ad sent to {telegram_id} (campaign_id={campaign_id})")
     return True
 
 
 async def stop_campaign(campaign_id: int) -> None:
-    """Остановить кампанию (для админки)."""
     async with async_session() as session:
-        campaign = (await async_session().execute(
+        campaign = (await session.execute(
             select(AdvertisingCampaign).where(AdvertisingCampaign.id == campaign_id)
         )).scalar_one_or_none()
         if campaign:

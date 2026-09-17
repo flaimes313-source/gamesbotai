@@ -1,22 +1,27 @@
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database.connection import async_session
 from database.models import Test, User, UserTest
+from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
+from services.analytics.tracker import track
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
-# Кэш состояния прохождения тестов: telegram_id -> {"test_id":..., "question":..., "answers":[...]}
 ACTIVE_TESTS: dict[int, dict] = {}
+
+TOTAL_QUESTIONS = 5
 
 
 async def _tests_menu_kb() -> InlineKeyboardMarkup:
     async with async_session() as session:
-        tests = (await session.execute(select(Test).where(Test.is_active.is_(True)).order_by(Test.sort_order))).scalars().all()
+        tests = (await session.execute(
+            select(Test).where(Test.is_active.is_(True)).order_by(Test.sort_order)
+        )).scalars().all()
 
     rows = [[InlineKeyboardButton(text=f"🧪 {t.name}", callback_data=f"test_start_{t.id}")] for t in tests]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -26,6 +31,27 @@ async def _tests_menu_kb() -> InlineKeyboardMarkup:
 async def cb_tests_menu(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("🧪 Выбери тест:", reply_markup=await _tests_menu_kb())
+
+
+async def _send_question(callback: CallbackQuery, question: dict):
+    options = question.get("options", [])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=opt[:60], callback_data=f"test_answer_{i}")]
+            for i, opt in enumerate(options)
+        ]
+    )
+
+    state = ACTIVE_TESTS.get(callback.from_user.id, {})
+    idx = state.get("question_index", 0) + 1
+    total = TOTAL_QUESTIONS
+    progress = "█" * idx + "░" * (total - idx)
+
+    await callback.message.answer(
+        f"<b>Вопрос {idx}/{total}</b>  {progress}\n\n"
+        f"❓ {question.get('question', '')}",
+        reply_markup=kb,
+    )
 
 
 @router.callback_query(F.data.startswith("test_start_"))
@@ -57,21 +83,8 @@ async def cb_test_start(callback: CallbackQuery):
         "answers": [],
     }
 
+    await track("test_started", telegram_id=callback.from_user.id, payload={"test_id": test_id})
     await _send_question(callback, question)
-
-
-async def _send_question(callback: CallbackQuery, question: dict):
-    options = question.get("options", [])
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=opt[:60], callback_data=f"test_answer_{i}")]
-            for i, opt in enumerate(options)
-        ]
-    )
-    await callback.message.answer(
-        f"❓ {question.get('question', '')}",
-        reply_markup=kb,
-    )
 
 
 @router.callback_query(F.data.startswith("test_answer_"))
@@ -92,8 +105,7 @@ async def cb_test_answer(callback: CallbackQuery):
     state["answers"].append(options[idx])
     state["question_index"] += 1
 
-    # Ограничимся 5 вопросами
-    if state["question_index"] < 5:
+    if state["question_index"] < TOTAL_QUESTIONS:
         try:
             q = await get_ai_provider().generate_test_question(state["test_name"], "")
             state["questions"].append(q)
@@ -102,7 +114,6 @@ async def cb_test_answer(callback: CallbackQuery):
         await _send_question(callback, state["questions"][state["question_index"]])
         return
 
-    # Завершаем тест
     await _finalize_test(callback, state)
 
 
@@ -115,12 +126,24 @@ async def _finalize_test(callback: CallbackQuery, state: dict):
         logger.exception("Test result failed")
         result = {"title": "ТЕСТ ПРОЙДЕН", "text": "Результат недоступен.", "emoji": "🧪"}
 
-    # Сохраняем
     async with async_session() as session:
-        user = (await session.execute(select(User).where(User.telegram_id == callback.from_user.id))).scalar_one_or_none()
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
         if user:
             session.add(UserTest(user_id=user.id, test_id=state["test_id"], result_json=result))
             await session.commit()
+
+            await unlock_achievement(user.id, "first_test")
+
+            cnt = (await session.execute(
+                select(func.count(UserTest.id)).where(UserTest.user_id == user.id)
+            )).scalar_one()
+            if cnt >= 5:
+                await unlock_achievement(user.id, "five_tests")
+
+    await track("test_completed", telegram_id=callback.from_user.id, payload={"test_id": state["test_id"]})
 
     await callback.message.answer(
         f"{result.get('emoji', '🧪')} <b>{result.get('title', '')}</b>\n\n{result.get('text', '')}"

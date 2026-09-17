@@ -8,8 +8,8 @@ def modes_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔄 Моя противоположность", callback_data="mode_opposite")],
             [InlineKeyboardButton(text="😂 Самый смешной", callback_data="mode_funny")],
             [InlineKeyboardButton(text="😎 Самый харизматичный", callback_data="mode_charismatic")],
-            [InlineKeyboardButton(text="🧠 Интеллектуальный соперник", callback_data="mode_intellectual")],
-            [InlineKeyboardButton(text="🧨 Максимальный хаос", callback_data="mode_chaos")],
+            [InlineKeyboardButton(text="🧠 Интеллектуальный соперник 💎", callback_data="mode_intellectual")],
+            [InlineKeyboardButton(text="🧨 Максимальный хаос 💎", callback_data="mode_chaos")],
             [InlineKeyboardButton(text="🎲 Случайный игрок", callback_data="mode_random")],
         ]
     )

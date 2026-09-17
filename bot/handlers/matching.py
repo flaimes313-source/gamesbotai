@@ -2,26 +2,28 @@ from typing import Dict
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
 
 from bot.keyboards.matching import match_actions_kb, modes_kb
 from config import config
 from database.connection import async_session
-from database.models import User
+from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
+from services.analytics.tracker import track
 from services.matching.matcher import (
     create_match_record,
     find_candidates,
     get_my_profile,
     get_my_user,
 )
+from services.premium import is_premium
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
-# Память показанных кандидатов: telegram_id → {"mode":..., "shown_ids":[...]}
 SEARCH_STATE: Dict[int, dict] = {}
+
+PREMIUM_MODES = {"intellectual", "chaos"}
 
 
 def _candidate_text(c: dict) -> str:
@@ -38,7 +40,6 @@ def _candidate_text(c: dict) -> str:
 
 
 async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: int) -> None:
-    """Находит следующего кандидата и отправляет его."""
     async with async_session() as session:
         me = await get_my_user(session, telegram_id)
         if me is None:
@@ -47,12 +48,12 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
 
         state = SEARCH_STATE.setdefault(telegram_id, {"mode": mode, "shown_ids": []})
 
-        # берём с запасом
+        limit = 50 if await is_premium(telegram_id) else 20
         candidates = await find_candidates(
             session,
             me.id,
             mode=mode,
-            limit=50,
+            limit=limit,
             exclude_ids=set(state["shown_ids"]),
         )
 
@@ -66,12 +67,18 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
     state["shown_ids"].append(c["user_id"])
     state["mode"] = mode
 
-    # сохраняем match в БД
     async with async_session() as session:
         me = await get_my_user(session, telegram_id)
         await create_match_record(session, me.id, c["user_id"], mode, c["score"])
 
-    # AI-описание (мягко, если не получится — не критично)
+    await track(
+        "match_created",
+        telegram_id=telegram_id,
+        payload={"mode": mode, "score": c["score"]},
+    )
+    await unlock_achievement(me.id, "first_match")
+
+    # AI-описание
     description_line = ""
     try:
         async with async_session() as session:
@@ -117,9 +124,16 @@ async def mode_selected(callback: CallbackQuery):
 
     mode = callback.data.replace("mode_", "")
 
-    # сбрасываем историю показанных при смене режима
-    SEARCH_STATE[callback.from_user.id] = {"mode": mode, "shown_ids": []}
+    if mode in PREMIUM_MODES:
+        if not await is_premium(callback.from_user.id):
+            await callback.message.answer(
+                "💎 Этот режим доступен только с PRO.\n"
+                "Оформить: /start → 💎 PRO"
+            )
+            return
 
+    await track("search_used", telegram_id=callback.from_user.id, payload={"mode": mode})
+    SEARCH_STATE[callback.from_user.id] = {"mode": mode, "shown_ids": []}
     await _send_next_candidate(callback, mode, callback.from_user.id)
 
 
