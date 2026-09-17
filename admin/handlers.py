@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -22,10 +21,14 @@ from database.models import (
     Payment,
     Promocode,
     SubscriptionCampaign,
+    SupportTicket,
     User,
+    Whitelist,
 )
 from services.analytics.funnel import format_funnel, get_funnel
+from services.experiments_report import ab_photo_prompt_report, format_ab_report
 from services.metrics import full_stats
+from services.whitelist import add_to_whitelist, remove_from_whitelist
 from utils.logging import get_logger
 
 router = Router()
@@ -62,7 +65,16 @@ async def cb_back(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-    await callback.message.edit_text("🛠 <b>Админ-панель</b>", reply_markup=admin_menu_kb())
+    try:
+        await callback.message.edit_text(
+            "🛠 <b>Админ-панель</b>",
+            reply_markup=admin_menu_kb(),
+        )
+    except Exception:
+        await callback.message.answer(
+            "🛠 <b>Админ-панель</b>",
+            reply_markup=admin_menu_kb(),
+        )
 
 
 # ============================================================
@@ -115,6 +127,22 @@ async def cb_funnel(callback: CallbackQuery):
 
 
 # ============================================================
+# A/B ТЕСТЫ
+# ============================================================
+@router.callback_query(F.data == "adm_ab")
+async def cb_ab(callback: CallbackQuery):
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+    try:
+        report = await ab_photo_prompt_report(days=30)
+        await callback.message.answer(format_ab_report(report))
+    except Exception:
+        logger.exception("AB report failed")
+        await callback.message.answer("❌ Не удалось построить отчёт.")
+
+
+# ============================================================
 # ПОЛЬЗОВАТЕЛИ
 # ============================================================
 @router.callback_query(F.data == "adm_users")
@@ -132,6 +160,75 @@ async def cb_users(callback: CallbackQuery):
     for u in users:
         lines.append(f"• {u.telegram_id} @{u.username or '—'} (game={u.participates_in_game})")
     await callback.message.answer("\n".join(lines))
+
+
+# ============================================================
+# WHITELIST
+# ============================================================
+@router.callback_query(F.data == "adm_wl")
+async def cb_wl(callback: CallbackQuery):
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(Whitelist).order_by(Whitelist.id.desc()).limit(30)
+        )).scalars().all()
+
+    lines = ["⭐ <b>Whitelist</b>\n"]
+    if not rows:
+        lines.append("Пусто.")
+    else:
+        for w in rows:
+            exp = w.expires_at.strftime("%Y-%m-%d") if w.expires_at else "∞"
+            lines.append(f"• {w.user_id} — {w.reason or '—'} (до {exp})")
+
+    lines.append("\nКоманды:")
+    lines.append("<code>/wl_add &lt;tg_id&gt; [причина]</code>")
+    lines.append("<code>/wl_remove &lt;tg_id&gt;</code>")
+    await callback.message.answer("\n".join(lines))
+
+
+@router.message(Command("wl_add"))
+async def cmd_wl_add(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer("Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>")
+        return
+
+    try:
+        tg_id = int(parts[1])
+    except ValueError:
+        await message.answer("ID должен быть числом.")
+        return
+
+    reason = parts[2] if len(parts) > 2 else None
+    await add_to_whitelist(tg_id, reason=reason, added_by=message.from_user.id)
+    await message.answer(f"✅ {tg_id} добавлен в whitelist.")
+
+
+@router.message(Command("wl_remove"))
+async def cmd_wl_remove(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Формат: <code>/wl_remove &lt;tg_id&gt;</code>")
+        return
+
+    try:
+        tg_id = int(parts[1])
+    except ValueError:
+        await message.answer("ID должен быть числом.")
+        return
+
+    await remove_from_whitelist(tg_id)
+    await message.answer(f"✅ {tg_id} удалён из whitelist.")
 
 
 # ============================================================
@@ -383,7 +480,7 @@ async def cb_flag_toggle(callback: CallbackQuery):
 
 
 # ============================================================
-# ПЛАТЕЖИ / ПОДДЕРЖКА (заглушки)
+# ПЛАТЕЖИ
 # ============================================================
 @router.callback_query(F.data == "adm_pay")
 async def cb_pay(callback: CallbackQuery):
@@ -406,12 +503,84 @@ async def cb_pay(callback: CallbackQuery):
     )
 
 
+# ============================================================
+# ПОДДЕРЖКА (тикеты)
+# ============================================================
 @router.callback_query(F.data == "adm_support")
 async def cb_support(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-    await callback.message.answer("🆘 Раздел поддержки в разработке.")
+
+    async with async_session() as session:
+        tickets = (await session.execute(
+            select(SupportTicket)
+            .where(SupportTicket.status == "open")
+            .order_by(SupportTicket.id.desc())
+            .limit(20)
+        )).scalars().all()
+
+    if not tickets:
+        await callback.message.answer("🆘 Открытых тикетов нет.")
+        return
+
+    lines = ["🆘 <b>Открытые тикеты</b>\n"]
+    for t in tickets:
+        lines.append(
+            f"#{t.id} [user_id={t.user_id}]\n"
+            f"   {t.message[:200]}\n"
+        )
+    lines.append("\nЧтобы ответить: <code>/reply &lt;ticket_id&gt; текст</code>")
+    await callback.message.answer("\n".join(lines))
+
+
+@router.message(Command("reply"))
+async def cmd_reply(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Формат: <code>/reply &lt;ticket_id&gt; текст</code>")
+        return
+
+    try:
+        ticket_id = int(parts[1])
+    except ValueError:
+        await message.answer("ID должен быть числом.")
+        return
+
+    reply_text = parts[2]
+
+    async with async_session() as session:
+        ticket = (await session.execute(
+            select(SupportTicket).where(SupportTicket.id == ticket_id)
+        )).scalar_one_or_none()
+
+        if ticket is None:
+            await message.answer("Тикет не найден.")
+            return
+
+        ticket.admin_reply = reply_text
+        ticket.status = "closed"
+        ticket.closed_at = datetime.utcnow()
+
+        user = (await session.execute(
+            select(User).where(User.id == ticket.user_id)
+        )).scalar_one_or_none()
+
+        await session.commit()
+
+    if user:
+        try:
+            await message.bot.send_message(
+                user.telegram_id,
+                f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{reply_text}"
+            )
+            await message.answer(f"✅ Ответ отправлен в тикет #{ticket_id}.")
+        except Exception:
+            logger.exception("Failed to send reply")
+            await message.answer("❌ Не удалось доставить ответ.")
 
 
 # ============================================================

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class AIProvider(ABC):
@@ -12,7 +12,11 @@ class AIProvider(ABC):
     """
 
     @abstractmethod
-    async def analyze_photo(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def analyze_photo(
+        self,
+        image_bytes: bytes,
+        prompt_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Анализ фотографии.
         Возвращает JSON:

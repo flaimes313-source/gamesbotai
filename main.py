@@ -1,19 +1,48 @@
 import asyncio
+import os
+import sys
+import traceback
+from datetime import datetime
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
 
-from bot.handlers import register_handlers
-from config import config
-from database.init_db import init_db
-from database.seed_tests import seed_tests
-from database.seed_achievements import seed_achievements
-from utils.logging import get_logger, setup_logging
-from webhook_server import run_server
+def _log_boot(msg: str) -> None:
+    print(f"[BOOT {datetime.utcnow().isoformat()}] {msg}", flush=True)
 
-logger = get_logger(__name__)
+
+_log_boot("=== PROCESS START ===")
+
+try:
+    _log_boot("Importing aiogram...")
+    from aiogram import Bot, Dispatcher
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+    from aiogram.types import BotCommand
+
+    _log_boot("Importing config...")
+    from config import config
+
+    _log_boot("Importing database...")
+    from database.init_db import init_db
+    from database.seed_achievements import seed_achievements
+    from database.seed_tests import seed_tests
+
+    _log_boot("Importing handlers...")
+    from bot.handlers import register_handlers
+
+    _log_boot("Importing utils...")
+    from utils.logging import get_logger, setup_logging
+
+    _log_boot("Importing webhook_server...")
+    from webhook_server import run_server
+
+    _log_boot("Importing daily_sender...")
+    from services.notifications.daily_sender import daily_loop
+
+    _log_boot("All imports OK")
+except Exception as e:
+    print(f"[BOOT ERROR] Import failed: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
 
 async def set_commands(bot: Bot) -> None:
@@ -25,39 +54,77 @@ async def set_commands(bot: Bot) -> None:
 
 
 async def main() -> None:
+    _log_boot("Entering main()")
     setup_logging()
+    logger = get_logger(__name__)
+
     logger.info("Bot starting...")
+    logger.info(f"BOT_TOKEN present: {bool(config.BOT_TOKEN)}")
+    logger.info(f"DATABASE_URL present: {bool(config.DATABASE_URL)}")
+    logger.info(f"GIGACHAT_API_KEY present: {bool(config.GIGACHAT_API_KEY)}")
 
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set")
     if not config.DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
 
+    logger.info("Calling init_db()...")
     await init_db()
+
+    logger.info("Seeding tests...")
     await seed_tests()
+
+    logger.info("Seeding achievements...")
     await seed_achievements()
 
-    # Запускаем webhook-сервер (YooKassa)
+    logger.info("Starting webhook server...")
+    port = int(os.getenv("PORT", "8080"))
     try:
-        await run_server(port=8080)
+        await run_server(port=port)
     except OSError as e:
         logger.warning(f"Webhook server not started: {e}")
+    except Exception:
+        logger.exception("Webhook server failed")
 
+    logger.info("Creating Bot instance...")
     bot = Bot(
         token=config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    logger.info("Creating Dispatcher...")
     dp = Dispatcher()
+
+    logger.info("Registering handlers...")
     register_handlers(dp)
 
+    logger.info("Setting bot commands...")
     await set_commands(bot)
 
+    # Запускаем daily-рассылку в фоне
+    logger.info("Starting daily notification loop...")
+    asyncio.create_task(daily_loop(bot))
+
     logger.info("Polling started.")
-    await dp.start_polling(bot, skip_updates=True)
+    try:
+        await dp.start_polling(
+            bot,
+            skip_updates=True,
+            handle_as_tasks=True,
+            tasks_concurrency_limit=50,
+        )
+    except TypeError:
+        # Старая версия aiogram без handle_as_tasks
+        logger.warning("handle_as_tasks not supported, fallback to default polling")
+        await dp.start_polling(bot, skip_updates=True)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped.")
+        _log_boot("Bot stopped by signal.")
+    except Exception as e:
+        print(f"[FATAL] {e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)

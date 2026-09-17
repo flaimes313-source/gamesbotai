@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
@@ -62,7 +62,12 @@ class GigaChatProvider(AIProvider):
     # --------------------------------------------------------
     # Низкоуровневый вызов чата (обёртка sync → async)
     # --------------------------------------------------------
-    async def _chat(self, messages: List[Messages], temperature: float = 0.8, max_tokens: int = 1500) -> str:
+    async def _chat(
+        self,
+        messages: List[Messages],
+        temperature: float = 0.8,
+        max_tokens: int = 1500,
+    ) -> str:
         def _sync_call() -> str:
             response = self._client.chat(
                 Chat(
@@ -78,18 +83,23 @@ class GigaChatProvider(AIProvider):
     # --------------------------------------------------------
     # Анализ фото (Vision)
     # --------------------------------------------------------
-    async def analyze_photo(self, image_bytes: bytes) -> Dict[str, Any]:
-        # Загружаем файл в GigaChat
+    async def analyze_photo(
+        self,
+        image_bytes: bytes,
+        prompt_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
         def _upload() -> Any:
             return self._client.upload_file(image_bytes)
 
         file_obj = await asyncio.to_thread(_upload)
         logger.info(f"Uploaded photo to GigaChat, file_id={file_obj.id_}")
 
+        prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
+
         messages = [
             Messages(
                 role=MessagesRole.SYSTEM,
-                content=PHOTO_ANALYSIS_PROMPT,
+                content=prompt_text,
             ),
             Messages(
                 role=MessagesRole.USER,

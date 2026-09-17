@@ -390,3 +390,20 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+# ============================================================
+# EXPERIMENTS (A/B-тесты промтов)
+# ============================================================
+class ExperimentAssignment(Base):
+    __tablename__ = "experiment_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment: Mapped[str] = mapped_column(String(64), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    variant: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("experiment", "telegram_id", name="uq_experiment_user"),
+    )
