@@ -22,18 +22,14 @@ logger = get_logger(__name__)
 def _extract_json(text: str) -> Dict[str, Any]:
     """
     Достаём JSON из ответа модели, даже если она обернула его в ```json ... ```.
-    Бросает ValueError, если JSON не найден.
     """
     if not text:
         raise ValueError("Empty AI response")
 
     cleaned = text.strip()
-
-    # Убираем markdown-обёртки
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
-    # Ищем первый { и последний }
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -48,6 +44,25 @@ def _extract_json(text: str) -> Dict[str, Any]:
         raise
 
 
+def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
+    """
+    Определяем MIME по magic bytes.
+    Возвращает (mime, extension).
+    """
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "jpg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "gif"
+    if image_bytes[:2] == b"BM":
+        return "image/bmp", "bmp"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp", "webp"
+    # fallback — Telegram шлёт JPEG
+    return "image/jpeg", "jpg"
+
+
 class GigaChatProvider(AIProvider):
     """Реализация AIProvider поверх официального SDK GigaChat."""
 
@@ -60,7 +75,7 @@ class GigaChatProvider(AIProvider):
         )
 
     # --------------------------------------------------------
-    # Низкоуровневый вызов чата (обёртка sync → async)
+    # Низкоуровневый вызов чата (sync → async)
     # --------------------------------------------------------
     async def _chat(
         self,
@@ -88,11 +103,22 @@ class GigaChatProvider(AIProvider):
         image_bytes: bytes,
         prompt_override: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # Явно определяем формат
+        mime, ext = _detect_image_mime(image_bytes)
+        filename = f"photo.{ext}"
+
         def _upload() -> Any:
-            return self._client.upload_file(image_bytes)
+            """
+            GigaChat SDK принимает файл как объект с .name (для определения MIME).
+            Используем io.BytesIO с атрибутом name.
+            """
+            import io
+            buf = io.BytesIO(image_bytes)
+            buf.name = filename  # ← ключевой момент: имя файла → MIME
+            return self._client.upload_file(buf, content_type=mime)
 
         file_obj = await asyncio.to_thread(_upload)
-        logger.info(f"Uploaded photo to GigaChat, file_id={file_obj.id_}")
+        logger.info(f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), file_id={file_obj.id_}")
 
         prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
 
