@@ -30,7 +30,14 @@ class Config:
     # GigaChat
     GIGACHAT_API_KEY: str = os.getenv("GIGACHAT_API_KEY", "").strip()
     GIGACHAT_SCOPE: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS").strip()
+
+    # Текстовая модель — для тестов, daily, match, message helper
     GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-2").strip()
+
+    # Vision-модель — для анализа фото (обязательно поддерживает изображения)
+    GIGACHAT_VISION_MODEL: str = os.getenv(
+        "GIGACHAT_VISION_MODEL", "GigaChat-2-Max"
+    ).strip()
 
     # YandexGPT (опционально)
     YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "").strip()

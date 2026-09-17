@@ -75,7 +75,13 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
 # Провайдер GigaChat
 # ============================================================
 class GigaChatProvider(AIProvider):
-    """Реализация AIProvider поверх официального SDK GigaChat."""
+    """
+    Реализация AIProvider поверх официального SDK GigaChat.
+
+    Использует две модели:
+    - GIGACHAT_MODEL — для текстовых задач (тесты, daily, match, message helper).
+    - GIGACHAT_VISION_MODEL — для анализа фото (модель обязана поддерживать Vision).
+    """
 
     def __init__(self) -> None:
         self._client: GigaChat = GigaChat(
@@ -83,6 +89,10 @@ class GigaChatProvider(AIProvider):
             scope=config.GIGACHAT_SCOPE,
             model=config.GIGACHAT_MODEL,
             verify_ssl_certs=False,
+        )
+        logger.info(
+            f"GigaChat initialized: text_model={config.GIGACHAT_MODEL}, "
+            f"vision_model={config.GIGACHAT_VISION_MODEL}"
         )
 
     # --------------------------------------------------------
@@ -93,21 +103,34 @@ class GigaChatProvider(AIProvider):
         messages: List[Messages],
         temperature: float = 0.8,
         max_tokens: int = 1500,
+        model: Optional[str] = None,
     ) -> str:
+        """
+        Обёртка sync-вызова SDK в async.
+        model — если задан, используем эту модель (для Vision).
+        """
+        used_model = model or config.GIGACHAT_MODEL
+
         def _sync_call() -> str:
-            response = self._client.chat(
-                Chat(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            )
+            chat_kwargs: Dict[str, Any] = {
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            # Некоторые версии SDK не принимают model в Chat() —
+            # тогда работает только глобальный self._client.model.
+            try:
+                chat = Chat(model=used_model, **chat_kwargs)
+            except TypeError:
+                chat = Chat(**chat_kwargs)
+
+            response = self._client.chat(chat)
             return response.choices[0].message.content
 
         return await asyncio.to_thread(_sync_call)
 
     # --------------------------------------------------------
-    # Анализ фото (Vision)
+    # Анализ фото (Vision) — использует GIGACHAT_VISION_MODEL
     # --------------------------------------------------------
     async def analyze_photo(
         self,
@@ -147,7 +170,15 @@ class GigaChatProvider(AIProvider):
             ),
         ]
 
-        raw = await self._chat(messages, temperature=0.9, max_tokens=1200)
+        vision_model = config.GIGACHAT_VISION_MODEL
+        logger.info(f"Analyzing photo with Vision model: {vision_model}")
+
+        raw = await self._chat(
+            messages,
+            temperature=0.9,
+            max_tokens=1200,
+            model=vision_model,
+        )
         logger.info(f"GigaChat photo analysis raw: {raw[:300]}")
         return _extract_json(raw)
 
