@@ -1,23 +1,103 @@
+from typing import Dict
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
 from bot.keyboards.matching import match_actions_kb, modes_kb
 from config import config
 from database.connection import async_session
-from database.models import Profile, User
-from sqlalchemy import select
-from services.matching.compatibility import compatibility_score
-from services.matching.matcher import find_candidates
+from database.models import User
+from services.ai.factory import get_ai_provider
+from services.matching.matcher import (
+    create_match_record,
+    find_candidates,
+    get_my_profile,
+    get_my_user,
+)
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
+# Память показанных кандидатов: telegram_id → {"mode":..., "shown_ids":[...]}
+SEARCH_STATE: Dict[int, dict] = {}
 
-async def _my_user_id(telegram_id: int) -> int | None:
+
+def _candidate_text(c: dict) -> str:
+    p = c["profile"]
+    username_str = f"@{c['username']}" if (c["username"] and c["show_username"]) else "Скрыт"
+    name = c["first_name"] or "Игрок"
+    return (
+        f"🎯 Совпадение: <b>{c['score']}%</b>\n"
+        f"👤 {name}\n"
+        f"🧨 {p['archetype']}\n"
+        f"Харизма {p['charisma']} · Юмор {p['humor']} · Хаос {p['chaos']}\n"
+        f"Username: {username_str}"
+    )
+
+
+async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: int) -> None:
+    """Находит следующего кандидата и отправляет его."""
     async with async_session() as session:
-        user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
-        return user.id if user else None
+        me = await get_my_user(session, telegram_id)
+        if me is None:
+            await callback.message.answer("Сначала отправь фото!")
+            return
+
+        state = SEARCH_STATE.setdefault(telegram_id, {"mode": mode, "shown_ids": []})
+
+        # берём с запасом
+        candidates = await find_candidates(
+            session,
+            me.id,
+            mode=mode,
+            limit=50,
+            exclude_ids=set(state["shown_ids"]),
+        )
+
+    if not candidates:
+        await callback.message.answer(
+            "😔 Больше нет подходящих игроков. Попробуй другой режим или загляни позже!"
+        )
+        return
+
+    c = candidates[0]
+    state["shown_ids"].append(c["user_id"])
+    state["mode"] = mode
+
+    # сохраняем match в БД
+    async with async_session() as session:
+        me = await get_my_user(session, telegram_id)
+        await create_match_record(session, me.id, c["user_id"], mode, c["score"])
+
+    # AI-описание (мягко, если не получится — не критично)
+    description_line = ""
+    try:
+        async with async_session() as session:
+            me = await get_my_user(session, telegram_id)
+            my_p = await get_my_profile(session, me.id)
+            my_dict = {
+                "archetype": my_p.archetype if my_p else "",
+                "charisma": my_p.charisma if my_p else 0,
+                "humor": my_p.humor if my_p else 0,
+                "energy": my_p.energy if my_p else 0,
+                "chaos": my_p.chaos if my_p else 0,
+                "intellect": my_p.intellect if my_p else 0,
+            }
+        ai = await get_ai_provider().generate_match_description(
+            my_dict, c["profile"], c["score"]
+        )
+        description_line = (
+            f"\n\n<i>{ai.get('headline', '')}</i>\n"
+            f"{ai.get('description', '')}\n"
+            f"😂 {ai.get('chaos_comment', '')}"
+        )
+    except Exception:
+        logger.exception("Match description AI failed")
+
+    text = _candidate_text(c) + description_line
+    await callback.message.answer(text, reply_markup=match_actions_kb(c["user_id"], c["score"]))
 
 
 @router.message(F.text == "🎯 Найти игроков")
@@ -36,28 +116,19 @@ async def mode_selected(callback: CallbackQuery):
         return
 
     mode = callback.data.replace("mode_", "")
-    me_id = await _my_user_id(callback.from_user.id)
-    if me_id is None:
-        await callback.message.answer("Сначала отправь фото и создай профиль!")
-        return
 
-    async with async_session() as session:
-        candidates = await find_candidates(session, me_id, mode=mode, limit=5)
+    # сбрасываем историю показанных при смене режима
+    SEARCH_STATE[callback.from_user.id] = {"mode": mode, "shown_ids": []}
 
-    if not candidates:
-        await callback.message.answer("Пока нет игроков с подходящими профилями. Загляни позже!")
-        return
+    await _send_next_candidate(callback, mode, callback.from_user.id)
 
-    for c in candidates:
-        p = c["profile"]
-        username_str = f"@{c['username']}" if (c["username"] and c["show_username"]) else "Скрыт"
-        text = (
-            f"🎯 Совпадение: <b>{c['score']}%</b>\n"
-            f"🧨 {p['archetype']}\n"
-            f"Харизма {p['charisma']} · Юмор {p['humor']} · Хаос {p['chaos']}\n"
-            f"Username: {username_str}"
-        )
-        await callback.message.answer(text, reply_markup=match_actions_kb(c["user_id"]))
+
+@router.callback_query(F.data == "next_candidate")
+async def next_candidate(callback: CallbackQuery):
+    await callback.answer("Ищу следующего...")
+    state = SEARCH_STATE.get(callback.from_user.id)
+    mode = state["mode"] if state else "similar"
+    await _send_next_candidate(callback, mode, callback.from_user.id)
 
 
 @router.callback_query(F.data == "find_players")

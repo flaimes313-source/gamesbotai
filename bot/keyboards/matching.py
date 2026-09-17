@@ -15,12 +15,12 @@ def modes_kb() -> InlineKeyboardMarkup:
     )
 
 
-def match_actions_kb(target_user_id: int) -> InlineKeyboardMarkup:
+def match_actions_kb(target_user_id: int, score: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="💬 Написать сообщение", callback_data=f"msg_{target_user_id}")],
             [InlineKeyboardButton(text="😂 Отправить прикол", callback_data=f"joke_{target_user_id}")],
-            [InlineKeyboardButton(text="🎯 Следующий", callback_data="mode_similar")],
-            [InlineKeyboardButton(text="❌ Закрыть", callback_data="close_msg")],
+            [InlineKeyboardButton(text="🎯 Следующий", callback_data="next_candidate")],
+            [InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"block_{target_user_id}")],
         ]
     )

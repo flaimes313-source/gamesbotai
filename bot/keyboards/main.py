@@ -7,12 +7,11 @@ from aiogram.types import (
 
 
 # ============================================================
-# ГЛАВНОЕ REPLY-МЕНЮ (постоянные кнопки внизу экрана)
+# ГЛАВНОЕ REPLY-МЕНЮ
 # ============================================================
 def main_menu_kb() -> ReplyKeyboardMarkup:
     """
-    Основное меню бота. Показывается после /start и остаётся
-    внизу экрана как reply-клавиатура.
+    Основное меню бота. Показывается после /start.
     """
     kb = ReplyKeyboardMarkup(
         keyboard=[
@@ -26,14 +25,17 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="🎮 Социальная игра"),
+                KeyboardButton(text="📬 Входящие"),
+            ],
+            [
                 KeyboardButton(text="🏆 Достижения"),
-            ],
-            [
                 KeyboardButton(text="💎 PRO"),
-                KeyboardButton(text="📤 Поделиться"),
             ],
             [
+                KeyboardButton(text="📤 Поделиться"),
                 KeyboardButton(text="⚙️ Настройки"),
+            ],
+            [
                 KeyboardButton(text="🆘 Поддержка"),
             ],
         ],
@@ -47,7 +49,6 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
 # ОТПРАВКА ФОТО
 # ============================================================
 def send_photo_kb() -> InlineKeyboardMarkup:
-    """Inline-кнопка для приглашения отправить фото."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📸 Отправить фото", callback_data="send_photo")],
@@ -61,8 +62,7 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 def share_kb(share_url: str) -> InlineKeyboardMarkup:
     """
     Клавиатура после результата анализа:
-    кнопка «Поделиться» (открывает системный share Telegram)
-    и «Новый анализ».
+    «Поделиться» (системный share) + «Новый анализ».
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -73,7 +73,6 @@ def share_kb(share_url: str) -> InlineKeyboardMarkup:
 
 
 def share_only_kb(share_url: str) -> InlineKeyboardMarkup:
-    """Только кнопка «Поделиться» (для профиля)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться с друзьями", url=share_url)],
@@ -85,7 +84,6 @@ def share_only_kb(share_url: str) -> InlineKeyboardMarkup:
 # НАСТРОЙКИ
 # ============================================================
 def settings_kb() -> InlineKeyboardMarkup:
-    """Меню настроек."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Приватность", callback_data="privacy_settings")],
@@ -100,7 +98,6 @@ def settings_kb() -> InlineKeyboardMarkup:
 # PRO
 # ============================================================
 def pro_menu_kb() -> InlineKeyboardMarkup:
-    """Меню PRO-подписки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="💎 Купить PRO (299 ₽ / 30 дней)", callback_data="buy_pro")],
@@ -113,7 +110,6 @@ def pro_menu_kb() -> InlineKeyboardMarkup:
 # ДОСТИЖЕНИЯ
 # ============================================================
 def achievements_back_kb() -> InlineKeyboardMarkup:
-    """Кнопка «назад» из достижений."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
@@ -125,7 +121,6 @@ def achievements_back_kb() -> InlineKeyboardMarkup:
 # ПОДДЕРЖКА
 # ============================================================
 def support_kb() -> InlineKeyboardMarkup:
-    """Меню поддержки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Написать в поддержку", callback_data="support_write")],
@@ -135,10 +130,9 @@ def support_kb() -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# УТИЛИТА
+# УТИЛИТЫ
 # ============================================================
 def back_to_main_kb() -> InlineKeyboardMarkup:
-    """Универсальная кнопка возврата в главное меню."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
@@ -147,7 +141,6 @@ def back_to_main_kb() -> InlineKeyboardMarkup:
 
 
 def cancel_kb() -> InlineKeyboardMarkup:
-    """Универсальная кнопка «Отмена»."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
