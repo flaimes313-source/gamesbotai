@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Optional
 
@@ -21,6 +23,9 @@ class Base(DeclarativeBase):
     pass
 
 
+# ============================================================
+# USERS
+# ============================================================
 class User(Base):
     __tablename__ = "users"
 
@@ -31,7 +36,9 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(8), default="ru")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_active_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -50,11 +57,14 @@ class User(Base):
     last_subscription_offer: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_ad_received: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    profiles: Mapped[list["Profile"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    analyses: Mapped[list["PhotoAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    tests: Mapped[list["UserTest"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    profiles: Mapped[list[Profile]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    analyses: Mapped[list[PhotoAnalysis]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    tests: Mapped[list[UserTest]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+# ============================================================
+# PROFILES
+# ============================================================
 class Profile(Base):
     __tablename__ = "profiles"
 
@@ -81,11 +91,16 @@ class Profile(Base):
     vibe: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
-    user: Mapped["User"] = relationship(back_populates="profiles")
+    user: Mapped[User] = relationship(back_populates="profiles")
 
 
+# ============================================================
+# PHOTO ANALYSES
+# ============================================================
 class PhotoAnalysis(Base):
     __tablename__ = "photo_analyses"
 
@@ -102,9 +117,12 @@ class PhotoAnalysis(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="analyses")
+    user: Mapped[User] = relationship(back_populates="analyses")
 
 
+# ============================================================
+# TESTS
+# ============================================================
 class Test(Base):
     __tablename__ = "tests"
 
@@ -125,9 +143,12 @@ class UserTest(Base):
     result_json: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="tests")
+    user: Mapped[User] = relationship(back_populates="tests")
 
 
+# ============================================================
+# MATCHES
+# ============================================================
 class Match(Base):
     __tablename__ = "matches"
 
@@ -147,6 +168,9 @@ class Match(Base):
     )
 
 
+# ============================================================
+# MESSAGES
+# ============================================================
 class Message(Base):
     __tablename__ = "messages"
 
@@ -161,6 +185,9 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# ============================================================
+# SUPPORT
+# ============================================================
 class SupportTicket(Base):
     __tablename__ = "support_tickets"
 
@@ -173,6 +200,9 @@ class SupportTicket(Base):
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ============================================================
+# WHITELIST
+# ============================================================
 class Whitelist(Base):
     __tablename__ = "whitelist"
 
@@ -184,6 +214,9 @@ class Whitelist(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ============================================================
+# PAYMENTS
+# ============================================================
 class Payment(Base):
     __tablename__ = "payments"
 
@@ -202,6 +235,25 @@ class Payment(Base):
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ============================================================
+# PROMOCODES
+# ============================================================
+class Promocode(Base):
+    __tablename__ = "promocodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    type: Mapped[str] = mapped_column(String(32), default="pro_days")
+    value: Mapped[int] = mapped_column(Integer, default=30)
+    max_uses: Mapped[int] = mapped_column(Integer, default=0)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+# ============================================================
+# SUBSCRIPTION CAMPAIGNS
+# ============================================================
 class SubscriptionCampaign(Base):
     __tablename__ = "subscription_campaigns"
 
@@ -242,6 +294,9 @@ class SubscriptionEvent(Base):
     )
 
 
+# ============================================================
+# ADVERTISING
+# ============================================================
 class AdvertisingCampaign(Base):
     __tablename__ = "advertising_campaigns"
 
@@ -275,3 +330,43 @@ class UserAdEvent(Base):
 
     shown_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     clicked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ============================================================
+# ACHIEVEMENTS
+# ============================================================
+class Achievement(Base):
+    __tablename__ = "achievements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+    emoji: Mapped[str] = mapped_column(String(8), default="🏆")
+
+
+class UserAchievement(Base):
+    __tablename__ = "user_achievements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    achievement_code: Mapped[str] = mapped_column(String(64), index=True)
+    unlocked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "achievement_code", name="uq_user_achievement"),
+    )
+
+
+# ============================================================
+# FEATURE FLAGS
+# ============================================================
+class FeatureFlag(Base):
+    __tablename__ = "feature_flags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

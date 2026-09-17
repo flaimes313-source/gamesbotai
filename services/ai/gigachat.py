@@ -1,8 +1,7 @@
 import asyncio
 import json
 import re
-import uuid
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
@@ -12,6 +11,8 @@ from prompts.daily_result import DAILY_RESULT_PROMPT
 from prompts.match_description import MATCH_DESCRIPTION_PROMPT
 from prompts.message_helper import MESSAGE_HELPER_PROMPT
 from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
+from prompts.test_question import TEST_QUESTION_PROMPT
+from prompts.test_result import TEST_RESULT_PROMPT
 from services.ai.base import AIProvider
 from utils.logging import get_logger
 
@@ -19,47 +20,71 @@ logger = get_logger(__name__)
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """Достаём JSON из ответа модели, даже если она обернула его в ```json ... ```."""
-    text = text.strip()
+    """
+    Достаём JSON из ответа модели, даже если она обернула его в ```json ... ```.
+    Бросает ValueError, если JSON не найден.
+    """
+    if not text:
+        raise ValueError("Empty AI response")
+
+    cleaned = text.strip()
 
     # Убираем markdown-обёртки
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
 
     # Ищем первый { и последний }
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError(f"No JSON found in AI response: {text[:200]}")
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"No JSON found in AI response: {cleaned[:200]}")
 
-    return json.loads(text[start : end + 1])
+    json_str = cleaned[start : end + 1]
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}. Raw: {json_str[:300]}")
+        raise
 
 
 class GigaChatProvider(AIProvider):
+    """Реализация AIProvider поверх официального SDK GigaChat."""
+
     def __init__(self) -> None:
-        self._client = GigaChat(
+        self._client: GigaChat = GigaChat(
             credentials=config.GIGACHAT_API_KEY,
             scope=config.GIGACHAT_SCOPE,
             model=config.GIGACHAT_MODEL,
             verify_ssl_certs=False,
         )
 
-    async def _chat(self, messages: list) -> str:
-        """Обёртка синхронного SDK в async-вызов."""
-        def _sync_call():
+    # --------------------------------------------------------
+    # Низкоуровневый вызов чата (обёртка sync → async)
+    # --------------------------------------------------------
+    async def _chat(self, messages: List[Messages], temperature: float = 0.8, max_tokens: int = 1500) -> str:
+        def _sync_call() -> str:
             response = self._client.chat(
-                Chat(messages=messages, temperature=0.8, max_tokens=1500)
+                Chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
             )
             return response.choices[0].message.content
 
         return await asyncio.to_thread(_sync_call)
 
+    # --------------------------------------------------------
+    # Анализ фото (Vision)
+    # --------------------------------------------------------
     async def analyze_photo(self, image_bytes: bytes) -> Dict[str, Any]:
         # Загружаем файл в GigaChat
-        def _upload():
+        def _upload() -> Any:
             return self._client.upload_file(image_bytes)
 
         file_obj = await asyncio.to_thread(_upload)
+        logger.info(f"Uploaded photo to GigaChat, file_id={file_obj.id_}")
 
         messages = [
             Messages(
@@ -73,10 +98,13 @@ class GigaChatProvider(AIProvider):
             ),
         ]
 
-        raw = await self._chat(messages)
+        raw = await self._chat(messages, temperature=0.9, max_tokens=1200)
         logger.info(f"GigaChat photo analysis raw: {raw[:300]}")
         return _extract_json(raw)
 
+    # --------------------------------------------------------
+    # Ежедневный результат
+    # --------------------------------------------------------
     async def generate_daily_result(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         prompt = DAILY_RESULT_PROMPT.format(
             archetype=profile.get("archetype", ""),
@@ -87,11 +115,17 @@ class GigaChatProvider(AIProvider):
             creativity=profile.get("creativity", 0),
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages)
+        raw = await self._chat(messages, temperature=0.9, max_tokens=400)
         return _extract_json(raw)
 
+    # --------------------------------------------------------
+    # Описание Match
+    # --------------------------------------------------------
     async def generate_match_description(
-        self, profile1: Dict[str, Any], profile2: Dict[str, Any], match_score: int
+        self,
+        profile1: Dict[str, Any],
+        profile2: Dict[str, Any],
+        match_score: int,
     ) -> Dict[str, Any]:
         prompt = MATCH_DESCRIPTION_PROMPT.format(
             archetype1=profile1.get("archetype", ""),
@@ -109,9 +143,12 @@ class GigaChatProvider(AIProvider):
             match_score=match_score,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages)
+        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
         return _extract_json(raw)
 
+    # --------------------------------------------------------
+    # Варианты первого сообщения
+    # --------------------------------------------------------
     async def generate_message_suggestions(
         self,
         my_archetype: str,
@@ -126,5 +163,38 @@ class GigaChatProvider(AIProvider):
             style=style,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages)
+        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
+        return _extract_json(raw)
+
+    # --------------------------------------------------------
+    # Вопрос теста
+    # --------------------------------------------------------
+    async def generate_test_question(
+        self,
+        test_name: str,
+        test_description: str,
+    ) -> Dict[str, Any]:
+        prompt = TEST_QUESTION_PROMPT.format(
+            test_name=test_name,
+            test_description=test_description or "",
+        )
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
+        return _extract_json(raw)
+
+    # --------------------------------------------------------
+    # Результат теста
+    # --------------------------------------------------------
+    async def generate_test_result(
+        self,
+        test_name: str,
+        answers: List[str],
+    ) -> Dict[str, Any]:
+        answers_text = "\n".join(f"- {a}" for a in answers)
+        prompt = TEST_RESULT_PROMPT.format(
+            test_name=test_name,
+            answers=answers_text,
+        )
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
         return _extract_json(raw)
