@@ -1,37 +1,64 @@
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import Profile, User
+from utils.logging import get_logger
 
 router = Router()
+logger = get_logger(__name__)
 
 
-@router.callback_query(F.data == "compare_menu")
-async def cb_compare(callback: CallbackQuery):
-    await callback.answer()
-
+async def _send_comparison(message_or_callback, telegram_id: int) -> None:
+    """
+    Сравнивает пользователя с его рефералом (другом, пришедшим по ссылке).
+    """
     async with async_session() as session:
-        user = (await session.execute(select(User).where(User.telegram_id == callback.from_user.id))).scalar_one_or_none()
-        if user is None or user.referrer_id is None:
-            await callback.message.answer(
-                "Сравнение доступно, когда друг придёт по твоей ссылке. Поделись результатом!"
+        user = (await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )).scalar_one_or_none()
+
+        if user is None:
+            text = "Сначала отправь фото — создай свой профиль!"
+        elif user.referrer_id is None:
+            text = (
+                "👥 <b>Сравнить с другом</b>\n\n"
+                "Пока сравнить не с кем.\n\n"
+                "Поделись своей ссылкой с другом — когда он зайдёт по ней "
+                "и пройдёт свой анализ, вы сможете сравнить результаты!"
             )
-            return
+        else:
+            referrer = (await session.execute(
+                select(User).where(User.id == user.referrer_id)
+            )).scalar_one_or_none()
 
-        referrer = (await session.execute(select(User).where(User.id == user.referrer_id))).scalar_one_or_none()
-        if referrer is None:
-            await callback.message.answer("Не удалось найти друга 😔")
-            return
+            if referrer is None:
+                text = "Не удалось найти друга 😔"
+            else:
+                my_p = (await session.execute(
+                    select(Profile).where(Profile.user_id == user.id)
+                    .order_by(Profile.id.desc()).limit(1)
+                )).scalar_one_or_none()
 
-        my_p = (await session.execute(select(Profile).where(Profile.user_id == user.id).order_by(Profile.id.desc()).limit(1))).scalar_one_or_none()
-        fr_p = (await session.execute(select(Profile).where(Profile.user_id == referrer.id).order_by(Profile.id.desc()).limit(1))).scalar_one_or_none()
+                fr_p = (await session.execute(
+                    select(Profile).where(Profile.user_id == referrer.id)
+                    .order_by(Profile.id.desc()).limit(1)
+                )).scalar_one_or_none()
 
-    if not my_p or not fr_p:
-        await callback.message.answer("У кого-то из вас пока нет профиля.")
-        return
+                if not my_p or not fr_p:
+                    text = "У кого-то из вас пока нет профиля. Пусть оба отправят фото!"
+                else:
+                    text = _format_comparison(my_p, fr_p)
 
+    # Отправляем
+    if isinstance(message_or_callback, CallbackQuery):
+        await message_or_callback.message.answer(text)
+    else:
+        await message_or_callback.answer(text)
+
+
+def _format_comparison(my_p: Profile, fr_p: Profile) -> str:
     categories = [
         ("Харизма", my_p.charisma, fr_p.charisma),
         ("Юмор", my_p.humor, fr_p.humor),
@@ -43,9 +70,31 @@ async def cb_compare(callback: CallbackQuery):
 
     lines = ["👥 <b>СРАВНЕНИЕ С ДРУГОМ</b>\n"]
     for name, a, b in categories:
-        winner = "ты" if a > b else ("друг" if b > a else "ничья")
+        if a > b:
+            winner = "ты"
+        elif b > a:
+            winner = "друг"
+        else:
+            winner = "ничья"
         diff = abs(a - b)
-        lines.append(f"{name}: {a} vs {b} — разница {diff} ({winner})")
+        lines.append(f"{name}: <b>{a}</b> vs <b>{b}</b> — разница {diff} ({winner})")
 
     lines.append("\nБез негатива: оба — легенды 😎")
-    await callback.message.answer("\n".join(lines))
+    return "\n".join(lines)
+
+
+# ============================================================
+# REPLY-КНОПКА «👥 Сравнить»
+# ============================================================
+@router.message(F.text == "👥 Сравнить")
+async def compare_from_menu(message: Message):
+    await _send_comparison(message, message.from_user.id)
+
+
+# ============================================================
+# CALLBACK из профиля / других меню
+# ============================================================
+@router.callback_query(F.data == "compare_menu")
+async def compare_from_callback(callback: CallbackQuery):
+    await callback.answer()
+    await _send_comparison(callback, callback.from_user.id)
