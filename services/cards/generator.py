@@ -1,3 +1,4 @@
+import logging
 import os
 from io import BytesIO
 from typing import Any, Dict
@@ -6,15 +7,20 @@ from PIL import Image, ImageDraw, ImageFont
 
 from services.cards.themes import theme_for
 
+_logger = logging.getLogger(__name__)
+
 CARD_WIDTH = 900
 CARD_HEIGHT = 1200
 
-# Пути к шрифтам в порядке приоритета
+# Пути к шрифтам в порядке приоритета.
+# data/fonts — наши, лежат в репозитории, работают и локально, и на BotHost.
 _FONT_DIRS = [
-    "data/fonts",                            # ← наши, лежат в репо
-    "/usr/share/fonts/truetype/dejavu",      # Linux (BotHost, если есть)
-    "/usr/share/fonts/dejavu",               # другой Linux-путь
-    "C:\\Windows\\Fonts",                    # Windows
+    "data/fonts",
+    "/app/data/fonts",
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/TTF",
+    "C:\\Windows\\Fonts",
 ]
 
 
@@ -32,19 +38,37 @@ def _find_font_file(bold: bool = False) -> str | None:
     for d in _FONT_DIRS:
         if not os.path.isdir(d):
             continue
+        try:
+            files = os.listdir(d)
+        except Exception:
+            continue
         for name in names:
-            path = os.path.join(d, name)
-            if os.path.exists(path):
-                return path
+            if name in files:
+                return os.path.join(d, name)
     return None
 
 
-# Кэшируем пути, чтобы не искать каждый раз
 _FONT_REGULAR = _find_font_file(bold=False)
 _FONT_BOLD = _find_font_file(bold=True)
 
 
-def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+# ============================================================
+# ДИАГНОСТИКА (можно убрать после отладки)
+# ============================================================
+_logger.info(f"[CARDS] cwd = {os.getcwd()}")
+_logger.info(f"[CARDS] _FONT_REGULAR = {_FONT_REGULAR}")
+_logger.info(f"[CARDS] _FONT_BOLD = {_FONT_BOLD}")
+for _d in _FONT_DIRS:
+    try:
+        exists = os.path.isdir(_d)
+        content = os.listdir(_d) if exists else None
+        _logger.info(f"[CARDS] dir={_d} exists={exists} content={content}")
+    except Exception as _e:
+        _logger.error(f"[CARDS] dir={_d} error: {_e}")
+# ============================================================
+
+
+def _load_font(size: int, bold: bool = False):
     """
     Возвращает шрифт указанного размера.
     Если не нашли ни одного TTF — фолбэк на дефолтный (будут квадраты вместо кириллицы).
@@ -53,8 +77,8 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageF
     if path:
         try:
             return ImageFont.truetype(path, size)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.error(f"[CARDS] truetype({path}, {size}) failed: {e}")
     return ImageFont.load_default()
 
 
@@ -118,7 +142,7 @@ def generate_card(
     # Разделитель
     draw.rectangle([(60, 100), (CARD_WIDTH - 60, 104)], fill=theme["accent"])
 
-    # ---------- Архетип (с переносом, если длинный) ----------
+    # ---------- Архетип ----------
     y = 140
     y = _draw_wrapped(
         draw,
@@ -149,7 +173,6 @@ def generate_card(
 
         draw.text((60, y), label, font=font_label, fill=theme["text"])
 
-        # Прогресс-бар
         bar_x = 380
         bar_w = 380
         bar_h = 22
@@ -165,8 +188,6 @@ def generate_card(
                 [(bar_x, y + 12), (bar_x + filled_w, y + 12 + bar_h)],
                 fill=theme["accent"],
             )
-
-        # Число
         draw.text(
             (bar_x + bar_w + 20, y),
             str(value),
@@ -180,7 +201,7 @@ def generate_card(
     danger = int(profile.get("danger_level", 0))
     draw.text(
         (60, y),
-        f"⚠ Опасность для друзей: {danger}",
+        f"Опасность для друзей: {danger}",
         font=font_small,
         fill=theme["subtext"],
     )
@@ -205,7 +226,6 @@ def generate_card(
         fill=theme["accent"],
     )
 
-    # Username слева
     if username:
         draw.text(
             (60, CARD_HEIGHT - 50),
@@ -214,7 +234,6 @@ def generate_card(
             fill=theme["bg"],
         )
 
-    # Водяной знак бота справа
     watermark = f"@{bot_username}" if bot_username else "AI SOCIAL GAME"
     bbox = draw.textbbox((0, 0), watermark, font=font_watermark)
     w = bbox[2] - bbox[0]
