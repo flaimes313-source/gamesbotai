@@ -24,20 +24,13 @@ logger = get_logger(__name__)
 # Утилиты
 # ============================================================
 def _extract_json(text: str) -> Dict[str, Any]:
-    """
-    Достаём JSON из ответа модели, даже если она обернула его в ```json ... ```.
-    Бросает ValueError, если JSON не найден.
-    """
     if not text:
         raise ValueError("Empty AI response")
 
     cleaned = text.strip()
-
-    # Убираем markdown-обёртки
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
-    # Ищем первый { и последний }
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -53,10 +46,6 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 
 def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
-    """
-    Определяем MIME по magic bytes.
-    Возвращает (mime, extension).
-    """
     if image_bytes[:3] == b"\xff\xd8\xff":
         return "image/jpeg", "jpg"
     if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
@@ -67,8 +56,49 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
         return "image/bmp", "bmp"
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp", "webp"
-    # fallback — Telegram шлёт JPEG
     return "image/jpeg", "jpg"
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """
+    Проверяем, стоит ли повторять запрос при этой ошибке.
+    Повторяем только на 5xx и сетевые проблемы.
+    """
+    msg = str(exc)
+    retryable_markers = (
+        " 500 ", " 502 ", " 503 ", " 504 ",
+        "Gateway Time-out", "Gateway Timeout",
+        "Bad Gateway", "Service Unavailable",
+        "Connection", "Timeout", "Read timed out",
+        "Temporary failure",
+    )
+    return any(marker in msg for marker in retryable_markers)
+
+
+async def _with_retry(coro_func, attempts: int = 3, base_delay: float = 1.0):
+    """
+    Повторяет асинхронный вызов при retryable-ошибках.
+    Паузы: 1s, 2s, 4s...
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return await coro_func()
+        except Exception as e:
+            last_error = e
+            if not _is_retryable_error(e) or attempt == attempts - 1:
+                raise
+            wait = base_delay * (2 ** attempt)
+            logger.warning(
+                f"Attempt {attempt + 1}/{attempts} failed "
+                f"({e.__class__.__name__}: {str(e)[:120]}). "
+                f"Retry in {wait:.1f}s..."
+            )
+            await asyncio.sleep(wait)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Retry logic error")
 
 
 # ============================================================
@@ -78,9 +108,8 @@ class GigaChatProvider(AIProvider):
     """
     Реализация AIProvider поверх официального SDK GigaChat.
 
-    Использует две модели:
-    - GIGACHAT_MODEL — для текстовых задач (тесты, daily, match, message helper).
-    - GIGACHAT_VISION_MODEL — для анализа фото (модель обязана поддерживать Vision).
+    - GIGACHAT_MODEL — для текстовых задач.
+    - GIGACHAT_VISION_MODEL — для анализа фото.
     """
 
     def __init__(self) -> None:
@@ -105,10 +134,6 @@ class GigaChatProvider(AIProvider):
         max_tokens: int = 1500,
         model: Optional[str] = None,
     ) -> str:
-        """
-        Обёртка sync-вызова SDK в async.
-        model — если задан, используем эту модель (для Vision).
-        """
         used_model = model or config.GIGACHAT_MODEL
 
         def _sync_call() -> str:
@@ -117,8 +142,6 @@ class GigaChatProvider(AIProvider):
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            # Некоторые версии SDK не принимают model в Chat() —
-            # тогда работает только глобальный self._client.model.
             try:
                 chat = Chat(model=used_model, **chat_kwargs)
             except TypeError:
@@ -130,39 +153,35 @@ class GigaChatProvider(AIProvider):
         return await asyncio.to_thread(_sync_call)
 
     # --------------------------------------------------------
-    # Анализ фото (Vision) — использует GIGACHAT_VISION_MODEL
+    # Анализ фото (Vision) — с retry
     # --------------------------------------------------------
     async def analyze_photo(
         self,
         image_bytes: bytes,
         prompt_override: Optional[str] = None,
     ) -> Dict[str, Any]:
-        # Явно определяем формат
         mime, ext = _detect_image_mime(image_bytes)
         filename = f"photo.{ext}"
 
-        def _upload() -> Any:
-            """
-            GigaChat SDK определяет MIME по имени файла.
-            Передаём BytesIO с атрибутом .name = "photo.jpg".
-            """
-            buf = io.BytesIO(image_bytes)
-            buf.name = filename
-            return self._client.upload_file(buf)
+        async def _do_upload():
+            def _sync_upload() -> Any:
+                buf = io.BytesIO(image_bytes)
+                buf.name = filename
+                return self._client.upload_file(buf)
+            return await asyncio.to_thread(_sync_upload)
 
-        file_obj = await asyncio.to_thread(_upload)
+        file_obj = await _with_retry(_do_upload, attempts=3, base_delay=1.0)
+
         logger.info(
             f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), "
             f"file_id={file_obj.id_}"
         )
 
         prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
+        vision_model = config.GIGACHAT_VISION_MODEL
 
         messages = [
-            Messages(
-                role=MessagesRole.SYSTEM,
-                content=prompt_text,
-            ),
+            Messages(role=MessagesRole.SYSTEM, content=prompt_text),
             Messages(
                 role=MessagesRole.USER,
                 content="Проанализируй фотографию и верни JSON согласно инструкции.",
@@ -170,15 +189,17 @@ class GigaChatProvider(AIProvider):
             ),
         ]
 
-        vision_model = config.GIGACHAT_VISION_MODEL
         logger.info(f"Analyzing photo with Vision model: {vision_model}")
 
-        raw = await self._chat(
-            messages,
-            temperature=0.9,
-            max_tokens=1200,
-            model=vision_model,
-        )
+        async def _do_chat() -> str:
+            return await self._chat(
+                messages,
+                temperature=0.9,
+                max_tokens=1200,
+                model=vision_model,
+            )
+
+        raw = await _with_retry(_do_chat, attempts=3, base_delay=1.5)
         logger.info(f"GigaChat photo analysis raw: {raw[:300]}")
         return _extract_json(raw)
 
