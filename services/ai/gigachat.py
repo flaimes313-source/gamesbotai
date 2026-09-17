@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -19,17 +20,24 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================
+# Утилиты
+# ============================================================
 def _extract_json(text: str) -> Dict[str, Any]:
     """
     Достаём JSON из ответа модели, даже если она обернула его в ```json ... ```.
+    Бросает ValueError, если JSON не найден.
     """
     if not text:
         raise ValueError("Empty AI response")
 
     cleaned = text.strip()
+
+    # Убираем markdown-обёртки
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
+    # Ищем первый { и последний }
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -63,6 +71,9 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
     return "image/jpeg", "jpg"
 
 
+# ============================================================
+# Провайдер GigaChat
+# ============================================================
 class GigaChatProvider(AIProvider):
     """Реализация AIProvider поверх официального SDK GigaChat."""
 
@@ -109,16 +120,18 @@ class GigaChatProvider(AIProvider):
 
         def _upload() -> Any:
             """
-            GigaChat SDK принимает файл как объект с .name (для определения MIME).
-            Используем io.BytesIO с атрибутом name.
+            GigaChat SDK определяет MIME по имени файла.
+            Передаём BytesIO с атрибутом .name = "photo.jpg".
             """
-            import io
             buf = io.BytesIO(image_bytes)
-            buf.name = filename  # ← ключевой момент: имя файла → MIME
-            return self._client.upload_file(buf, content_type=mime)
+            buf.name = filename
+            return self._client.upload_file(buf)
 
         file_obj = await asyncio.to_thread(_upload)
-        logger.info(f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), file_id={file_obj.id_}")
+        logger.info(
+            f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), "
+            f"file_id={file_obj.id_}"
+        )
 
         prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
 
