@@ -15,7 +15,7 @@ from services.analysis.photo_analysis import analyze_photo
 from services.analysis.profile_builder import build_profile
 from services.cards.generator import generate_card
 from services.experiments import get_variant, pick_prompt_by_variant
-from services.rate_limit import check_and_increment
+from services.rate_limit import check_and_increment, is_unlimited
 from utils.logging import get_logger
 
 router = Router()
@@ -62,18 +62,21 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
 
 @router.message(F.photo)
 async def handle_photo(message: Message):
-    await message.answer("🔍 Анализирую твоё фото... Это займёт несколько секунд.")
-    await track("photo_sent", telegram_id=message.from_user.id)
+    telegram_id = message.from_user.id
 
-    # Получаем/создаём пользователя ДО rate limit
+    await message.answer("🔍 Анализирую твоё фото... Это займёт несколько секунд.")
+    await track("photo_sent", telegram_id=telegram_id)
+
     user = await get_or_create_user(
-        telegram_id=message.from_user.id,
+        telegram_id=telegram_id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
 
-    # Rate limit
-    allowed, used, limit = await check_and_increment(message.from_user.id, user.id)
+    # --- Проверка лимита ---
+    unlimited = await is_unlimited(telegram_id)
+    allowed, used, limit = await check_and_increment(telegram_id, user.id)
+
     if not allowed:
         await message.answer(
             f"⚠️ Ты достиг дневного лимита AI-анализов ({used}/{limit}).\n\n"
@@ -82,9 +85,12 @@ async def handle_photo(message: Message):
         )
         return
 
-    logger.info(f"AI usage: user={user.id} {used}/{limit}")
+    if unlimited:
+        logger.info(f"AI usage: user={user.id} UNLIMITED (admin/whitelist)")
+    else:
+        logger.info(f"AI usage: user={user.id} {used}/{limit}")
 
-    # Скачиваем фото
+    # --- Скачиваем фото ---
     try:
         image_bytes = await _download_photo(message)
     except Exception:
@@ -92,14 +98,14 @@ async def handle_photo(message: Message):
         await message.answer("😔 Не удалось скачать фото. Попробуй ещё раз.")
         return
 
-    await track("analysis_started", telegram_id=message.from_user.id)
+    await track("analysis_started", telegram_id=telegram_id)
 
-    # A/B-тест промта
-    variant = await get_variant("photo_prompt", message.from_user.id)
+    # --- A/B-тест промпта ---
+    variant = await get_variant("photo_prompt", telegram_id)
     prompt_override, prompt_version = pick_prompt_by_variant(variant)
-    logger.info(f"A/B: user={message.from_user.id} variant={variant} prompt={prompt_version}")
+    logger.info(f"A/B: user={telegram_id} variant={variant} prompt={prompt_version}")
 
-    # Анализ AI
+    # --- AI-анализ ---
     try:
         analysis = await analyze_photo(image_bytes, prompt_override=prompt_override)
     except Exception:
@@ -107,9 +113,9 @@ async def handle_photo(message: Message):
         await message.answer("😔 AI сейчас не смог проанализировать фото. Попробуй позже.")
         return
 
-    await track("analysis_completed", telegram_id=message.from_user.id)
+    await track("analysis_completed", telegram_id=telegram_id)
 
-    # Сохраняем анализ + профиль
+    # --- Сохраняем ---
     async with async_session() as session:
         photo = message.photo[-1]
         session.add(PhotoAnalysis(
@@ -124,7 +130,7 @@ async def handle_photo(message: Message):
         session.add(profile)
         await session.commit()
 
-    # Достижения
+    # --- Достижения ---
     try:
         await unlock_achievement(user.id, "first_photo")
         scores = analysis.get("scores", {}) or {}
@@ -138,15 +144,19 @@ async def handle_photo(message: Message):
                 select(func.count(PhotoAnalysis.id)).where(PhotoAnalysis.user_id == user.id)
             )).scalar_one()
             if cnt == 2:
-                await track("second_analysis", telegram_id=message.from_user.id)
+                await track("second_analysis", telegram_id=telegram_id)
             if cnt >= 5:
                 await unlock_achievement(user.id, "five_analyses")
     except Exception:
         logger.exception("Achievement unlock failed")
 
+    # --- Результат ---
     result_text = _build_result_text(analysis)
 
-    # Карточка
+    if not unlimited:
+        remaining = max(0, limit - used)
+        result_text += f"\n\n📊 Осталось запросов сегодня: <b>{remaining}</b>/{limit}"
+
     try:
         bot_username = (await message.bot.get_me()).username
         card_bytes = generate_card(analysis, message.from_user.username, bot_username)
@@ -156,14 +166,13 @@ async def handle_photo(message: Message):
         logger.exception("Card generation failed")
         await message.answer(result_text)
 
-    # Share-кнопки
     await message.answer(
         "📤 Поделись результатом с друзьями — пусть тоже пройдут анализ!",
         reply_markup=share_kb(),
     )
 
-    await track("share_generated", telegram_id=message.from_user.id)
-    await _trigger_post_analysis_hooks(message.bot, message.from_user.id)
+    await track("share_generated", telegram_id=telegram_id)
+    await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
 
 @router.callback_query(F.data == "do_share")

@@ -16,7 +16,7 @@ try:
     from aiogram import Bot, Dispatcher
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
-    from aiogram.types import BotCommand
+    from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
     _log_boot("Importing config...")
     from config import config
@@ -45,12 +45,38 @@ except Exception as e:
     sys.exit(1)
 
 
-async def set_commands(bot: Bot) -> None:
-    await bot.set_my_commands([
+async def setup_commands(bot: Bot) -> None:
+    """
+    Устанавливает команды:
+    - для всех пользователей: /start, /help
+    - для админов: + /admin, /reply, /wl_add, /wl_remove
+    """
+    # 1. Дефолтные команды для всех
+    public_commands = [
         BotCommand(command="start", description="Начать работу"),
         BotCommand(command="help", description="Помощь"),
+    ]
+    await bot.set_my_commands(
+        public_commands,
+        scope=BotCommandScopeDefault(),
+    )
+
+    # 2. Расширенный набор для каждого админа
+    admin_commands = public_commands + [
         BotCommand(command="admin", description="Админ-панель"),
-    ])
+        BotCommand(command="reply", description="Ответить в тикет"),
+        BotCommand(command="wl_add", description="Добавить в whitelist"),
+        BotCommand(command="wl_remove", description="Удалить из whitelist"),
+    ]
+
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id),
+            )
+        except Exception as e:
+            print(f"[BOOT] Failed to set admin commands for {admin_id}: {e}", flush=True)
 
 
 async def main() -> None:
@@ -62,9 +88,7 @@ async def main() -> None:
     logger.info(f"BOT_TOKEN present: {bool(config.BOT_TOKEN)}")
     logger.info(f"DATABASE_URL present: {bool(config.DATABASE_URL)}")
     logger.info(f"GIGACHAT_API_KEY present: {bool(config.GIGACHAT_API_KEY)}")
-    logger.info(f"PREMIUM_ENABLED: {config.PREMIUM_ENABLED}")
-    logger.info(f"ADVERTISING_ENABLED: {config.ADVERTISING_ENABLED}")
-    logger.info(f"MANDATORY_SUBSCRIPTIONS: {config.MANDATORY_SUBSCRIPTIONS}")
+    logger.info(f"ADMIN_IDS: {config.ADMIN_IDS}")
 
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set")
@@ -102,9 +126,8 @@ async def main() -> None:
     register_handlers(dp)
 
     logger.info("Setting bot commands...")
-    await set_commands(bot)
+    await setup_commands(bot)
 
-    # ---- Daily retention loop ----
     logger.info("Starting daily notification loop...")
     try:
         asyncio.create_task(daily_loop(bot))

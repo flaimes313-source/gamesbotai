@@ -10,6 +10,9 @@ logger = get_logger(__name__)
 
 
 async def is_whitelisted(telegram_id: int) -> bool:
+    """
+    True, если пользователь в whitelist и срок не истёк.
+    """
     async with async_session() as session:
         row = (await session.execute(
             select(Whitelist).where(Whitelist.user_id == telegram_id)

@@ -9,6 +9,7 @@ from database.connection import async_session
 from database.models import SubscriptionCampaign, SubscriptionEvent, User
 from services.analytics.tracker import track
 from services.subscriptions.checker import is_subscribed
+from services.whitelist import is_whitelisted
 from utils.logging import get_logger
 
 router = Router()
@@ -18,7 +19,23 @@ OFFER_COOLDOWN_DAYS = 7
 
 
 async def maybe_offer_subscription(bot, telegram_id: int) -> None:
+    """
+    Показывает оффер обязательной подписки не чаще раза в 7 дней.
+    Пропускает:
+    - админов
+    - пользователей в whitelist
+    - тех, кто уже подтвердил подписку
+    """
     if not config.MANDATORY_SUBSCRIPTIONS:
+        return
+
+    # Админы не видят оффер
+    if telegram_id in config.ADMIN_IDS:
+        return
+
+    # Whitelist — пропуск
+    if await is_whitelisted(telegram_id):
+        logger.info(f"Subscription offer skipped: {telegram_id} in whitelist")
         return
 
     async with async_session() as session:

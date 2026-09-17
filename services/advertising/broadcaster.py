@@ -7,6 +7,7 @@ from config import config
 from database.connection import async_session
 from database.models import AdvertisingCampaign, User, UserAdEvent
 from services.analytics.tracker import track
+from services.whitelist import is_whitelisted
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +16,6 @@ AD_COOLDOWN_DAYS = 7
 
 
 def _ad_kb(campaign: AdvertisingCampaign) -> InlineKeyboardMarkup | None:
-    """Кнопка «Подробнее» с трекингом клика."""
     if not campaign.target_url:
         return None
     return InlineKeyboardMarkup(
@@ -32,6 +32,14 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
     if not config.ADVERTISING_ENABLED:
         return False
 
+    # Админы — без рекламы
+    if telegram_id in config.ADMIN_IDS:
+        return False
+
+    # Whitelist — без рекламы
+    if await is_whitelisted(telegram_id):
+        return False
+
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -45,7 +53,6 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if user.premium_until and user.premium_until > now:
             return False
 
-        # Cooldown
         if user.last_ad_received and (now - user.last_ad_received) < timedelta(days=AD_COOLDOWN_DAYS):
             return False
 
@@ -59,7 +66,6 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if campaign is None:
             return False
 
-        # Лимиты
         if campaign.impression_limit and campaign.sent_count >= campaign.impression_limit:
             return False
 
@@ -75,28 +81,15 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
 
         try:
             if campaign_image:
-                await bot.send_photo(
-                    telegram_id,
-                    campaign_image,
-                    caption=campaign_text,
-                    reply_markup=kb,
-                )
+                await bot.send_photo(telegram_id, campaign_image, caption=campaign_text, reply_markup=kb)
             else:
-                await bot.send_message(
-                    telegram_id,
-                    campaign_text,
-                    reply_markup=kb,
-                )
+                await bot.send_message(telegram_id, campaign_text, reply_markup=kb)
         except Exception:
             logger.exception("Ad send failed")
             return False
 
         campaign.sent_count += 1
-        session.add(UserAdEvent(
-            campaign_id=campaign.id,
-            user_id=user.id,
-            shown_at=now,
-        ))
+        session.add(UserAdEvent(campaign_id=campaign.id, user_id=user.id, shown_at=now))
         user.last_ad_received = now
         await session.commit()
 

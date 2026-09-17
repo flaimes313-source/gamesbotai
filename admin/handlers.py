@@ -45,6 +45,7 @@ def _is_admin(telegram_id: int) -> bool:
 
 
 async def _safe_answer(callback: CallbackQuery, text: str | None = None) -> None:
+    """Безопасный callback.answer — игнорируем 'query is too old'."""
     try:
         await callback.answer(text)
     except TelegramBadRequest as e:
@@ -57,6 +58,7 @@ async def _safe_answer(callback: CallbackQuery, text: str | None = None) -> None
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not _is_admin(message.from_user.id):
+        # Для не-админов команда не существует — молчим
         return
     await message.answer("🛠 <b>Админ-панель</b>", reply_markup=admin_menu_kb())
 
@@ -198,7 +200,10 @@ async def cmd_wl_add(message: Message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
-        await message.answer("Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>")
+        await message.answer(
+            "Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>\n"
+            "Например: <code>/wl_add 123456789 VIP</code>"
+        )
         return
 
     try:
@@ -209,7 +214,15 @@ async def cmd_wl_add(message: Message):
 
     reason = parts[2] if len(parts) > 2 else None
     await add_to_whitelist(tg_id, reason=reason, added_by=message.from_user.id)
-    await message.answer(f"✅ {tg_id} добавлен в whitelist.")
+
+    await message.answer(
+        f"✅ <b>{tg_id}</b> добавлен в whitelist.\n\n"
+        f"<b>Что это даёт:</b>\n"
+        f"• ♾ Безлимит AI-анализов\n"
+        f"• 🚫 Пропуск обязательных подписок\n"
+        f"• 🚫 Без рекламы\n\n"
+        f"Причина: {reason or '—'}"
+    )
 
 
 @router.message(Command("wl_remove"))
@@ -229,7 +242,7 @@ async def cmd_wl_remove(message: Message):
         return
 
     await remove_from_whitelist(tg_id)
-    await message.answer(f"✅ {tg_id} удалён из whitelist.")
+    await message.answer(f"✅ <b>{tg_id}</b> удалён из whitelist.")
 
 
 # ============================================================
