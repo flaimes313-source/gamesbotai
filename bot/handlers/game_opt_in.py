@@ -35,7 +35,7 @@ async def game_menu(message: Message):
         return
 
     await message.answer(
-        "🎮 Социальная игра\n\n"
+        "🎮 <b>Социальная игра</b>\n\n"
         "Здесь можно искать других игроков по архетипу, харизме и хаосу.\n"
         "Управляй приватностью в настройках.",
         reply_markup=game_menu_kb(user.participates_in_game),
@@ -55,7 +55,7 @@ async def cb_game_menu(callback: CallbackQuery):
         return
 
     await callback.message.answer(
-        "🎮 Социальная игра",
+        "🎮 <b>Социальная игра</b>",
         reply_markup=game_menu_kb(user.participates_in_game),
     )
 
@@ -88,10 +88,3 @@ async def game_leave(callback: CallbackQuery):
 
     await track("game_opt_out", telegram_id=callback.from_user.id)
     await callback.message.answer("🚪 Ты вышел из игры. Можешь вернуться в любой момент.")
-
-
-@router.callback_query(F.data == "privacy_settings")
-async def cb_privacy(callback: CallbackQuery):
-    # Передаём в privacy.router
-    from bot.handlers.privacy import open_privacy
-    await open_privacy(callback)

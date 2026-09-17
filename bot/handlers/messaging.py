@@ -46,7 +46,31 @@ def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# СООБЩЕНИЯ
+# REPLY: ВХОДЯЩИЕ  (должен быть ВЫШЕ catch-all)
+# ============================================================
+@router.message(F.text == "📬 Входящие")
+async def show_inbox(message: Message):
+    await track("inbox_viewed", telegram_id=message.from_user.id)
+
+    msgs = await get_inbox(message.from_user.id, limit=10)
+    if not msgs:
+        await message.answer(
+            "📭 <b>Входящих пока нет</b>\n\n"
+            "Найди игроков через «🎯 Найти игроков» — они смогут "
+            "отправлять тебе сообщения и приколы."
+        )
+        return
+
+    lines = ["📬 <b>Последние входящие:</b>\n"]
+    for m in msgs:
+        handle = f"@{m['sender_username']}" if m["sender_username"] else m["sender_name"]
+        prefix = "😂" if m["type"] == "joke" else "💬"
+        lines.append(f"{prefix} <b>{handle}</b>: {m['text'][:120]}")
+    await message.answer("\n".join(lines))
+
+
+# ============================================================
+# CALLBACK: СООБЩЕНИЯ
 # ============================================================
 @router.callback_query(F.data.startswith("msg_"))
 async def cb_msg(callback: CallbackQuery):
@@ -54,7 +78,9 @@ async def cb_msg(callback: CallbackQuery):
     target_id = int(callback.data.replace("msg_", ""))
 
     async with async_session() as session:
-        target = (await session.execute(select(User).where(User.id == target_id))).scalar_one_or_none()
+        target = (await session.execute(
+            select(User).where(User.id == target_id)
+        )).scalar_one_or_none()
 
     if target is None:
         await callback.message.answer("Игрок не найден.")
@@ -89,8 +115,12 @@ async def cb_style(callback: CallbackQuery):
     target_id = int(target_id_str)
 
     async with async_session() as session:
-        me = (await session.execute(select(User).where(User.telegram_id == callback.from_user.id))).scalar_one_or_none()
-        target = (await session.execute(select(User).where(User.id == target_id))).scalar_one_or_none()
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        target = (await session.execute(
+            select(User).where(User.id == target_id)
+        )).scalar_one_or_none()
 
     if not me or not target:
         await callback.message.answer("Ошибка поиска игрока.")
@@ -172,7 +202,9 @@ async def cb_send_sugg(callback: CallbackQuery):
 
 async def _check_message_achievement(telegram_id: int) -> None:
     async with async_session() as session:
-        me = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
+        me = (await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )).scalar_one_or_none()
         if not me:
             return
         cnt = (await session.execute(
@@ -182,32 +214,8 @@ async def _check_message_achievement(telegram_id: int) -> None:
             await unlock_achievement(me.id, "ten_messages")
 
 
-@router.message(F.text & ~F.text.startswith("/"))
-async def handle_custom_text(message: Message):
-    target_id = PENDING_REPLY.get(message.from_user.id)
-    if not target_id:
-        return
-
-    PENDING_REPLY.pop(message.from_user.id, None)
-
-    ok = await deliver_message(
-        bot=message.bot,
-        sender_telegram_id=message.from_user.id,
-        receiver_user_id=target_id,
-        text=message.text[:1000],
-        msg_type="text",
-    )
-
-    if ok:
-        await track("message_sent", telegram_id=message.from_user.id, payload={"type": "custom"})
-        await _check_message_achievement(message.from_user.id)
-        await message.answer("✅ Сообщение доставлено!")
-    else:
-        await message.answer("❌ Не удалось доставить.")
-
-
 # ============================================================
-# ПРИКОЛЫ
+# CALLBACK: ПРИКОЛЫ
 # ============================================================
 @router.callback_query(F.data.startswith("joke_"))
 async def cb_joke(callback: CallbackQuery):
@@ -246,20 +254,32 @@ async def cb_jokecat(callback: CallbackQuery):
 
 
 # ============================================================
-# INBOX
+# CATCH-ALL — В САМОМ КОНЦЕ ФАЙЛА!
 # ============================================================
-@router.message(F.text == "📬 Входящие")
-async def show_inbox(message: Message):
-    await track("inbox_viewed", telegram_id=message.from_user.id)
-
-    msgs = await get_inbox(message.from_user.id, limit=10)
-    if not msgs:
-        await message.answer("📭 Входящих пока нет.")
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_custom_text(message: Message):
+    """
+    Обрабатывает текст пользователя, если он ждёт отправки сообщения
+    другому игроку. Если не ждёт — ничего не делает (и позволяет
+    другим роутерам обработать).
+    """
+    target_id = PENDING_REPLY.get(message.from_user.id)
+    if not target_id:
         return
 
-    lines = ["📬 <b>Последние входящие:</b>\n"]
-    for m in msgs:
-        handle = f"@{m['sender_username']}" if m["sender_username"] else m["sender_name"]
-        prefix = "😂" if m["type"] == "joke" else "💬"
-        lines.append(f"{prefix} <b>{handle}</b>: {m['text'][:120]}")
-    await message.answer("\n".join(lines))
+    PENDING_REPLY.pop(message.from_user.id, None)
+
+    ok = await deliver_message(
+        bot=message.bot,
+        sender_telegram_id=message.from_user.id,
+        receiver_user_id=target_id,
+        text=message.text[:1000],
+        msg_type="text",
+    )
+
+    if ok:
+        await track("message_sent", telegram_id=message.from_user.id, payload={"type": "custom"})
+        await _check_message_achievement(message.from_user.id)
+        await message.answer("✅ Сообщение доставлено!")
+    else:
+        await message.answer("❌ Не удалось доставить.")

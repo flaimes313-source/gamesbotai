@@ -14,25 +14,22 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text="👤 Мой профиль"),
-                KeyboardButton(text="📸 Новый анализ"),
-            ],
-            [
-                KeyboardButton(text="👥 Сравнить"),
                 KeyboardButton(text="🎯 Найти игроков"),
             ],
             [
-                KeyboardButton(text="🎮 Социальная игра"),
+                KeyboardButton(text="👥 Сравнить"),
                 KeyboardButton(text="📬 Входящие"),
             ],
             [
+                KeyboardButton(text="🎮 Социальная игра"),
                 KeyboardButton(text="🏆 Достижения"),
+            ],
+            [
                 KeyboardButton(text="💎 PRO"),
-            ],
-            [
                 KeyboardButton(text="📤 Поделиться"),
-                KeyboardButton(text="⚙️ Настройки"),
             ],
             [
+                KeyboardButton(text="⚙️ Настройки"),
                 KeyboardButton(text="🆘 Поддержка"),
             ],
         ],
@@ -64,13 +61,12 @@ def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться с друзьями", callback_data="do_share")],
-            [InlineKeyboardButton(text="🔄 Новый анализ", callback_data="new_analysis")],
         ]
     )
 
 
 def share_link_kb(share_url: str) -> InlineKeyboardMarkup:
-    """Кнопка с реальной share-ссылкой (после нажатия «Поделиться»)."""
+    """Inline-кнопка с готовой ссылкой шаринга (открывает системный share)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Открыть шаринг", url=share_url)],
@@ -96,6 +92,7 @@ def settings_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🎮 Социальная игра", callback_data="game_menu")],
             [InlineKeyboardButton(text="💎 PRO", callback_data="pro_menu")],
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support_menu")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
         ]
     )
 
@@ -108,6 +105,7 @@ def pro_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="💎 Купить PRO (299 ₽ / 30 дней)", callback_data="buy_pro")],
             [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="enter_promo")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")],
         ]
     )
 
@@ -131,6 +129,7 @@ def support_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Написать в поддержку", callback_data="support_write")],
             [InlineKeyboardButton(text="📖 FAQ", callback_data="support_faq")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")],
         ]
     )
 

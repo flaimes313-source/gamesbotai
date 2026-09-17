@@ -2,7 +2,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
-from bot.keyboards.main import share_link_kb
+from bot.keyboards.main import main_menu_kb, share_link_kb, settings_kb
 from bot.keyboards.profile import profile_kb
 from database.connection import async_session
 from database.models import Profile, User
@@ -13,6 +13,9 @@ router = Router()
 logger = get_logger(__name__)
 
 
+# ============================================================
+# Хелперы
+# ============================================================
 async def _latest_profile(telegram_id: int) -> tuple[User | None, Profile | None]:
     async with async_session() as session:
         user = (await session.execute(
@@ -66,6 +69,7 @@ async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
     share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"
 
     await track("share_clicked", telegram_id=telegram_id)
+    await track("share_generated", telegram_id=telegram_id)
 
     text = (
         "📤 <b>Поделись результатом</b>\n\n"
@@ -87,7 +91,9 @@ async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
 async def show_profile(message: Message):
     user, profile = await _latest_profile(message.from_user.id)
     if profile is None:
-        await message.answer("У тебя пока нет профиля. Отправь фото 📸 чтобы пройти первый анализ!")
+        await message.answer(
+            "У тебя пока нет профиля. Отправь фото 📸 чтобы пройти первый анализ!"
+        )
         return
     await message.answer(_profile_text(user, profile), reply_markup=profile_kb())
 
@@ -99,8 +105,10 @@ async def share_from_menu(message: Message):
 
 @router.message(F.text == "⚙️ Настройки")
 async def settings_from_menu(message: Message):
-    from bot.keyboards.main import settings_kb
-    await message.answer("⚙️ Настройки:", reply_markup=settings_kb())
+    await message.answer(
+        "⚙️ <b>Настройки</b>\n\nЧто хочешь настроить?",
+        reply_markup=settings_kb(),
+    )
 
 
 # ============================================================
@@ -115,12 +123,24 @@ async def cb_share(callback: CallbackQuery):
 @router.callback_query(F.data == "settings")
 async def cb_settings(callback: CallbackQuery):
     await callback.answer()
-    from bot.keyboards.main import settings_kb
-    await callback.message.answer("⚙️ Настройки:", reply_markup=settings_kb())
+    text = "⚙️ <b>Настройки</b>\n\nЧто хочешь настроить?"
+    try:
+        await callback.message.edit_text(text, reply_markup=settings_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=settings_kb())
 
 
 @router.callback_query(F.data == "back_to_main")
 async def cb_back_to_main(callback: CallbackQuery):
     await callback.answer()
-    from bot.keyboards.main import main_menu_kb
-    await callback.message.answer("🏠 Главное меню", reply_markup=main_menu_kb())
+    try:
+        await callback.message.edit_text(
+            "🏠 <b>Главное меню</b>",
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+    await callback.message.answer(
+        "🏠 Главное меню. Отправь фото или выбери пункт меню.",
+        reply_markup=main_menu_kb(),
+    )
