@@ -1,85 +1,56 @@
+"""
+Генератор карточек с встроенными шрифтами (base64).
+Работает на любой версии Python >= 3.8 и любом хостинге.
+"""
+import io
 import logging
-import os
 from io import BytesIO
 from typing import Any, Dict
 
 from PIL import Image, ImageDraw, ImageFont
 
+from services.cards.fonts_embedded import (
+    get_bold_font_bytes,
+    get_regular_font_bytes,
+)
 from services.cards.themes import theme_for
 
 _logger = logging.getLogger(__name__)
 
+print("[CARDS] generator.py module loaded", flush=True)
+
 CARD_WIDTH = 900
 CARD_HEIGHT = 1200
 
-# Пути к шрифтам в порядке приоритета.
-# data/fonts — наши, лежат в репозитории, работают и локально, и на BotHost.
-_FONT_DIRS = [
-    "data/fonts",
-    "/app/data/fonts",
-    "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/dejavu",
-    "/usr/share/fonts/TTF",
-    "C:\\Windows\\Fonts",
-]
+# Загружаем байты шрифтов один раз при импорте модуля
+_FONT_REGULAR_BYTES = get_regular_font_bytes()
+_FONT_BOLD_BYTES = get_bold_font_bytes()
 
-
-def _find_font_file(bold: bool = False) -> str | None:
-    """
-    Ищет файл шрифта с кириллицей во всех известных директориях.
-    Возвращает путь к первому найденному или None.
-    """
-    names = (
-        ["DejaVuSans-Bold.ttf", "arialbd.ttf", "Arial Bold.ttf"]
-        if bold
-        else ["DejaVuSans.ttf", "arial.ttf", "Arial.ttf"]
-    )
-
-    for d in _FONT_DIRS:
-        if not os.path.isdir(d):
-            continue
-        try:
-            files = os.listdir(d)
-        except Exception:
-            continue
-        for name in names:
-            if name in files:
-                return os.path.join(d, name)
-    return None
-
-
-_FONT_REGULAR = _find_font_file(bold=False)
-_FONT_BOLD = _find_font_file(bold=True)
-
-
-# ============================================================
-# ДИАГНОСТИКА (можно убрать после отладки)
-# ============================================================
-_logger.info(f"[CARDS] cwd = {os.getcwd()}")
-_logger.info(f"[CARDS] _FONT_REGULAR = {_FONT_REGULAR}")
-_logger.info(f"[CARDS] _FONT_BOLD = {_FONT_BOLD}")
-for _d in _FONT_DIRS:
-    try:
-        exists = os.path.isdir(_d)
-        content = os.listdir(_d) if exists else None
-        _logger.info(f"[CARDS] dir={_d} exists={exists} content={content}")
-    except Exception as _e:
-        _logger.error(f"[CARDS] dir={_d} error: {_e}")
-# ============================================================
+print(
+    f"[CARDS] embedded fonts loaded: "
+    f"regular={len(_FONT_REGULAR_BYTES)} bytes, "
+    f"bold={len(_FONT_BOLD_BYTES)} bytes",
+    flush=True,
+)
+_logger.info(
+    f"[CARDS] embedded fonts loaded: "
+    f"regular={len(_FONT_REGULAR_BYTES)} bytes, "
+    f"bold={len(_FONT_BOLD_BYTES)} bytes"
+)
 
 
 def _load_font(size: int, bold: bool = False):
     """
-    Возвращает шрифт указанного размера.
-    Если не нашли ни одного TTF — фолбэк на дефолтный (будут квадраты вместо кириллицы).
+    Возвращает шрифт нужного размера из встроенных байтов.
+    Работает везде — шрифт лежит в памяти процесса.
     """
-    path = _FONT_BOLD if bold else _FONT_REGULAR
-    if path:
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception as e:
-            _logger.error(f"[CARDS] truetype({path}, {size}) failed: {e}")
-    return ImageFont.load_default()
+    data = _FONT_BOLD_BYTES if bold else _FONT_REGULAR_BYTES
+    try:
+        return ImageFont.truetype(io.BytesIO(data), size)
+    except Exception as e:
+        print(f"[CARDS] truetype(size={size}, bold={bold}) failed: {e}", flush=True)
+        _logger.error(f"[CARDS] truetype failed: {e}")
+        return ImageFont.load_default()
 
 
 def _draw_wrapped(
@@ -112,8 +83,8 @@ def _draw_wrapped(
 
 def generate_card(
     profile: Dict[str, Any],
-    username: str | None = None,
-    bot_username: str | None = None,
+    username=None,
+    bot_username=None,
 ) -> bytes:
     """
     Генерирует карточку результата с цветовой темой под архетип
@@ -138,8 +109,6 @@ def generate_card(
 
     # ---------- Заголовок ----------
     draw.text((60, 55), "AI SOCIAL GAME", font=font_header, fill=theme["subtext"])
-
-    # Разделитель
     draw.rectangle([(60, 100), (CARD_WIDTH - 60, 104)], fill=theme["accent"])
 
     # ---------- Архетип ----------

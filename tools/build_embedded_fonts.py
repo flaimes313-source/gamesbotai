@@ -1,56 +1,76 @@
 """
 Генерирует services/cards/fonts_embedded.py
-с шрифтами DejaVuSans и DejaVuSans-Bold, вшитыми в base64.
+с найденными TTF-шрифтами в base64.
+
+Ищет в data/fonts/ любые файлы:
+- Regular: DejaVuSans.ttf, NotoSans-Regular.ttf, Arial.ttf, arial.ttf
+- Bold:    DejaVuSans-Bold.ttf, NotoSans-Bold.ttf, Arial-Bold.ttf, arialbd.ttf
 
 Запуск:
     python tools/build_embedded_fonts.py
-
-Требует наличия файлов:
-    data/fonts/DejaVuSans.ttf
-    data/fonts/DejaVuSans-Bold.ttf
 """
 import base64
-import os
 import sys
 from pathlib import Path
 
 
-FONT_REGULAR = Path("data/fonts/DejaVuSans.ttf")
-FONT_BOLD = Path("data/fonts/DejaVuSans-Bold.ttf")
+FONT_DIR = Path("data/fonts")
 OUTPUT = Path("services/cards/fonts_embedded.py")
+
+REGULAR_CANDIDATES = [
+    "DejaVuSans.ttf",
+    "NotoSans-Regular.ttf",
+    "Arial.ttf",
+    "arial.ttf",
+]
+
+BOLD_CANDIDATES = [
+    "DejaVuSans-Bold.ttf",
+    "NotoSans-Bold.ttf",
+    "Arial-Bold.ttf",
+    "arialbd.ttf",
+    "Arial Bold.ttf",
+]
+
+
+def _find(candidates):
+    for name in candidates:
+        p = FONT_DIR / name
+        if p.exists() and p.stat().st_size > 100_000:
+            return p
+    return None
 
 
 def _b64_wrap(data_b64: str, width: int = 76) -> str:
-    """Разбивает длинную строку base64 на куски по width символов (PEP8)."""
     lines = [data_b64[i:i + width] for i in range(0, len(data_b64), width)]
     return "\n".join(f'    "{line}"' for line in lines)
 
 
 def main() -> int:
-    if not FONT_REGULAR.exists():
-        print(f"❌ Не найден: {FONT_REGULAR}")
-        return 1
-    if not FONT_BOLD.exists():
-        print(f"❌ Не найден: {FONT_BOLD}")
+    regular = _find(REGULAR_CANDIDATES)
+    bold = _find(BOLD_CANDIDATES)
+
+    if not regular:
+        print("❌ Не найден regular шрифт в data/fonts/")
+        print(f"   Ожидались: {REGULAR_CANDIDATES}")
         return 1
 
-    print(f"📖 Читаю {FONT_REGULAR} ({FONT_REGULAR.stat().st_size} bytes)")
-    regular_b64 = base64.b64encode(FONT_REGULAR.read_bytes()).decode("ascii")
+    if not bold:
+        print("❌ Не найден bold шрифт в data/fonts/")
+        print(f"   Ожидались: {BOLD_CANDIDATES}")
+        return 1
 
-    print(f"📖 Читаю {FONT_BOLD} ({FONT_BOLD.stat().st_size} bytes)")
-    bold_b64 = base64.b64encode(FONT_BOLD.read_bytes()).decode("ascii")
+    print(f"📖 Regular: {regular} ({regular.stat().st_size} bytes)")
+    print(f"📖 Bold:    {bold} ({bold.stat().st_size} bytes)")
+
+    regular_b64 = base64.b64encode(regular.read_bytes()).decode("ascii")
+    bold_b64 = base64.b64encode(bold.read_bytes()).decode("ascii")
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
     content = f'''"""
 Автоматически сгенерированный файл. НЕ редактировать вручную.
-
-Шрифты DejaVu Sans (Regular + Bold), вшитые в base64.
-Позволяет генерировать карточки с кириллицей на любом хостинге,
-включая BotHost, без необходимости складывать TTF-файлы рядом.
-
-Сгенерировано: tools/build_embedded_fonts.py
-Лицензия DejaVu: Bitstream Vera + Public Domain дополнения.
+Шрифты вшиты в base64. Сгенерировано: tools/build_embedded_fonts.py
 """
 
 import base64
@@ -65,12 +85,10 @@ DEJAVU_SANS_BOLD_B64 = (
 
 
 def get_regular_font_bytes() -> bytes:
-    """Возвращает байты DejaVu Sans Regular."""
     return base64.b64decode(DEJAVU_SANS_REGULAR_B64)
 
 
 def get_bold_font_bytes() -> bytes:
-    """Возвращает байты DejaVu Sans Bold."""
     return base64.b64decode(DEJAVU_SANS_BOLD_B64)
 '''
 
