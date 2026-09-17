@@ -15,6 +15,7 @@ from bot.handlers import (
     payments,
     subscriptions,
     blocking,
+    advertising,
 )
 from admin import handlers as admin_handlers
 
@@ -43,6 +44,7 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(payments.router)
     root_router.include_router(subscriptions.router)
     root_router.include_router(blocking.router)
+    root_router.include_router(advertising.router)
 
     # 3. Catch-all — в самом конце
     root_router.include_router(messaging.router)

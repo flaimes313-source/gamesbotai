@@ -10,9 +10,6 @@ from aiogram.types import (
 # ГЛАВНОЕ REPLY-МЕНЮ
 # ============================================================
 def main_menu_kb() -> ReplyKeyboardMarkup:
-    """
-    Основное меню бота. Показывается после /start.
-    """
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -59,15 +56,24 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 # ============================================================
 # SHARE
 # ============================================================
-def share_kb(share_url: str) -> InlineKeyboardMarkup:
+def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
     """
-    Клавиатура после результата анализа:
-    «Поделиться» (системный share) + «Новый анализ».
+    Кнопка «Поделиться» сначала вызывается как callback (для трекинга),
+    потом бот возвращает сообщение с реальной share-ссылкой.
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться с друзьями", url=share_url)],
+            [InlineKeyboardButton(text="📤 Поделиться с друзьями", callback_data="do_share")],
             [InlineKeyboardButton(text="🔄 Новый анализ", callback_data="new_analysis")],
+        ]
+    )
+
+
+def share_link_kb(share_url: str) -> InlineKeyboardMarkup:
+    """Кнопка с реальной share-ссылкой (после нажатия «Поделиться»)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Открыть шаринг", url=share_url)],
         ]
     )
 

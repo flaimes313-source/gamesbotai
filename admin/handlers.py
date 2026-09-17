@@ -25,6 +25,7 @@ from database.models import (
     User,
     Whitelist,
 )
+from services.advertising.reports import ads_report, format_ads_report
 from services.analytics.funnel import format_funnel, get_funnel
 from services.experiments_report import ab_photo_prompt_report, format_ab_report
 from services.metrics import full_stats
@@ -296,6 +297,19 @@ async def cb_ads_stop_all(callback: CallbackQuery):
         await session.commit()
 
     await callback.message.answer(f"🚨 Остановлено кампаний: {len(rows)}")
+
+
+@router.callback_query(F.data == "adm_ads_report")
+async def cb_ads_report(callback: CallbackQuery):
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+    try:
+        report = await ads_report(days=30)
+        await callback.message.answer(format_ads_report(report))
+    except Exception:
+        logger.exception("Ads report failed")
+        await callback.message.answer("❌ Не удалось получить отчёт.")
 
 
 # ============================================================

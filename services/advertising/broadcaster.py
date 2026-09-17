@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
 from config import config
@@ -13,6 +14,20 @@ logger = get_logger(__name__)
 AD_COOLDOWN_DAYS = 7
 
 
+def _ad_kb(campaign: AdvertisingCampaign) -> InlineKeyboardMarkup | None:
+    """Кнопка «Подробнее» с трекингом клика."""
+    if not campaign.target_url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔗 Подробнее",
+                callback_data=f"ad_click_{campaign.id}",
+            )],
+        ]
+    )
+
+
 async def maybe_send_ad(bot, telegram_id: int) -> bool:
     if not config.ADVERTISING_ENABLED:
         return False
@@ -21,7 +36,6 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         user = (await session.execute(
             select(User).where(User.telegram_id == telegram_id)
         )).scalar_one_or_none()
-
         if user is None:
             return False
 
@@ -45,6 +59,7 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if campaign is None:
             return False
 
+        # Лимиты
         if campaign.impression_limit and campaign.sent_count >= campaign.impression_limit:
             return False
 
@@ -56,12 +71,22 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         campaign_id = campaign.id
         campaign_text = campaign.text
         campaign_image = campaign.image_file_id
+        kb = _ad_kb(campaign)
 
         try:
             if campaign_image:
-                await bot.send_photo(telegram_id, campaign_image, caption=campaign_text)
+                await bot.send_photo(
+                    telegram_id,
+                    campaign_image,
+                    caption=campaign_text,
+                    reply_markup=kb,
+                )
             else:
-                await bot.send_message(telegram_id, campaign_text)
+                await bot.send_message(
+                    telegram_id,
+                    campaign_text,
+                    reply_markup=kb,
+                )
         except Exception:
             logger.exception("Ad send failed")
             return False

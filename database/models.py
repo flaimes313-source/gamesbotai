@@ -407,3 +407,21 @@ class ExperimentAssignment(Base):
     __table_args__ = (
         UniqueConstraint("experiment", "telegram_id", name="uq_experiment_user"),
     )
+
+
+# ============================================================
+# AI USAGE (rate limiting)
+# ============================================================
+class AIUsage(Base):
+    __tablename__ = "ai_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "day", name="uq_ai_usage_user_day"),
+    )

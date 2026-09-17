@@ -5,15 +5,17 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import func, select
 
 from bot.handlers.start import get_or_create_user
-from bot.keyboards.main import share_kb
+from bot.keyboards.main import share_kb, share_link_kb
 from config import config
 from database.connection import async_session
-from database.models import PhotoAnalysis
+from database.models import PhotoAnalysis, User
 from services.achievements import unlock_achievement
 from services.analytics.tracker import track
 from services.analysis.photo_analysis import analyze_photo
 from services.analysis.profile_builder import build_profile
 from services.cards.generator import generate_card
+from services.experiments import get_variant, pick_prompt_by_variant
+from services.rate_limit import check_and_increment
 from utils.logging import get_logger
 
 router = Router()
@@ -63,6 +65,26 @@ async def handle_photo(message: Message):
     await message.answer("🔍 Анализирую твоё фото... Это займёт несколько секунд.")
     await track("photo_sent", telegram_id=message.from_user.id)
 
+    # Получаем/создаём пользователя ДО rate limit
+    user = await get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+    )
+
+    # Rate limit
+    allowed, used, limit = await check_and_increment(message.from_user.id, user.id)
+    if not allowed:
+        await message.answer(
+            f"⚠️ Ты достиг дневного лимита AI-анализов ({used}/{limit}).\n\n"
+            "💎 С PRO можно делать до 50 анализов в день.\n"
+            "Лимит обновится завтра."
+        )
+        return
+
+    logger.info(f"AI usage: user={user.id} {used}/{limit}")
+
+    # Скачиваем фото
     try:
         image_bytes = await _download_photo(message)
     except Exception:
@@ -72,8 +94,14 @@ async def handle_photo(message: Message):
 
     await track("analysis_started", telegram_id=message.from_user.id)
 
+    # A/B-тест промта
+    variant = await get_variant("photo_prompt", message.from_user.id)
+    prompt_override, prompt_version = pick_prompt_by_variant(variant)
+    logger.info(f"A/B: user={message.from_user.id} variant={variant} prompt={prompt_version}")
+
+    # Анализ AI
     try:
-        analysis = await analyze_photo(image_bytes)
+        analysis = await analyze_photo(image_bytes, prompt_override=prompt_override)
     except Exception:
         logger.exception("Analysis failed")
         await message.answer("😔 AI сейчас не смог проанализировать фото. Попробуй позже.")
@@ -81,12 +109,7 @@ async def handle_photo(message: Message):
 
     await track("analysis_completed", telegram_id=message.from_user.id)
 
-    user = await get_or_create_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-    )
-
+    # Сохраняем анализ + профиль
     async with async_session() as session:
         photo = message.photo[-1]
         session.add(PhotoAnalysis(
@@ -95,7 +118,7 @@ async def handle_photo(message: Message):
             telegram_file_unique_id=photo.file_unique_id,
             analysis_json=analysis,
             model=config.GIGACHAT_MODEL,
-            prompt_version=config.PROMPT_VERSION_PHOTO,
+            prompt_version=prompt_version,
         ))
         profile = build_profile(user.id, analysis)
         session.add(profile)
@@ -110,7 +133,6 @@ async def handle_photo(message: Message):
         if scores.get("charisma", 0) >= 90:
             await unlock_achievement(user.id, "charisma_90")
 
-        # Второй анализ?
         async with async_session() as session:
             cnt = (await session.execute(
                 select(func.count(PhotoAnalysis.id)).where(PhotoAnalysis.user_id == user.id)
@@ -124,6 +146,7 @@ async def handle_photo(message: Message):
 
     result_text = _build_result_text(analysis)
 
+    # Карточка
     try:
         bot_username = (await message.bot.get_me()).username
         card_bytes = generate_card(analysis, message.from_user.username, bot_username)
@@ -133,18 +156,40 @@ async def handle_photo(message: Message):
         logger.exception("Card generation failed")
         await message.answer(result_text)
 
-    bot_username = (await message.bot.get_me()).username
-    share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
-    share_text = analysis.get("share_text", "Мне AI выдал смешной профиль 😂 Проверь себя!")
-    share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"
-
+    # Share-кнопки
     await message.answer(
         "📤 Поделись результатом с друзьями — пусть тоже пройдут анализ!",
-        reply_markup=share_kb(share_link),
+        reply_markup=share_kb(),
     )
 
     await track("share_generated", telegram_id=message.from_user.id)
     await _trigger_post_analysis_hooks(message.bot, message.from_user.id)
+
+
+@router.callback_query(F.data == "do_share")
+async def cb_do_share(callback: CallbackQuery):
+    await callback.answer()
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото!")
+        return
+
+    bot_username = (await callback.bot.get_me()).username
+    share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
+    share_text = "Мне AI выдал смешной профиль 😂 Проверь себя!"
+    share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"
+
+    await track("share_clicked", telegram_id=callback.from_user.id)
+
+    await callback.message.answer(
+        "Нажми, чтобы отправить друзьям:",
+        reply_markup=share_link_kb(share_link),
+    )
 
 
 @router.callback_query(F.data == "new_analysis")

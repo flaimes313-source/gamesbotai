@@ -62,6 +62,9 @@ async def main() -> None:
     logger.info(f"BOT_TOKEN present: {bool(config.BOT_TOKEN)}")
     logger.info(f"DATABASE_URL present: {bool(config.DATABASE_URL)}")
     logger.info(f"GIGACHAT_API_KEY present: {bool(config.GIGACHAT_API_KEY)}")
+    logger.info(f"PREMIUM_ENABLED: {config.PREMIUM_ENABLED}")
+    logger.info(f"ADVERTISING_ENABLED: {config.ADVERTISING_ENABLED}")
+    logger.info(f"MANDATORY_SUBSCRIPTIONS: {config.MANDATORY_SUBSCRIPTIONS}")
 
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set")
@@ -101,9 +104,12 @@ async def main() -> None:
     logger.info("Setting bot commands...")
     await set_commands(bot)
 
-    # Запускаем daily-рассылку в фоне
+    # ---- Daily retention loop ----
     logger.info("Starting daily notification loop...")
-    asyncio.create_task(daily_loop(bot))
+    try:
+        asyncio.create_task(daily_loop(bot))
+    except Exception:
+        logger.exception("Failed to start daily loop")
 
     logger.info("Polling started.")
     try:
@@ -114,7 +120,6 @@ async def main() -> None:
             tasks_concurrency_limit=50,
         )
     except TypeError:
-        # Старая версия aiogram без handle_as_tasks
         logger.warning("handle_as_tasks not supported, fallback to default polling")
         await dp.start_polling(bot, skip_updates=True)
 
