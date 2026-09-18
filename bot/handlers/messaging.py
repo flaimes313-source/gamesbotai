@@ -1,3 +1,5 @@
+from typing import Dict
+
 from aiogram import F, Router
 from aiogram.types import (
     CallbackQuery,
@@ -5,29 +7,22 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from sqlalchemy import func, select
 
 from database.connection import async_session
-from database.models import Message as MessageModel, User
+from database.models import User
 from services.access import has_full_access
-from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
+from services.chats import get_or_create_chat, send_chat_message
 from services.jokes import categories, random_joke
-from services.messaging import deliver_message, get_inbox
 from utils.logging import get_logger
+from sqlalchemy import select
 
 router = Router()
 logger = get_logger(__name__)
 
-PENDING_REPLY: dict[int, int] = {}
-
-
-# ============================================================
-# Фильтр: срабатываем ТОЛЬКО если пользователь ждёт отправки сообщения
-# ============================================================
-def _is_waiting_reply(message: Message) -> bool:
-    return PENDING_REPLY.get(message.from_user.id) is not None
+# Пользователь, ожидающий отправки «прикола»: telegram_id → chat_id
+PENDING_JOKE: Dict[int, int] = {}
 
 
 # ============================================================
@@ -47,11 +42,6 @@ def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
-    """
-    Клавиатура категорий приколов.
-    Из JSON-списка исключаем "Случайный"/"random" — чтобы не было дубля,
-    потому что кнопку "🎲 Случайный" добавляем мы сами.
-    """
     try:
         cats = categories()
         cats = [
@@ -74,31 +64,7 @@ def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# REPLY: ВХОДЯЩИЕ
-# ============================================================
-@router.message(F.text == "📬 Входящие")
-async def show_inbox(message: Message):
-    await track("inbox_viewed", telegram_id=message.from_user.id)
-
-    msgs = await get_inbox(message.from_user.id, limit=10)
-    if not msgs:
-        await message.answer(
-            "📭 <b>Входящих пока нет</b>\n\n"
-            "Найди игроков через «🎯 Найти игроков» — они смогут "
-            "отправлять тебе сообщения и приколы."
-        )
-        return
-
-    lines = ["📬 <b>Последние входящие:</b>\n"]
-    for m in msgs:
-        handle = f"@{m['sender_username']}" if m["sender_username"] else m["sender_name"]
-        prefix = "😂" if m["type"] == "joke" else "💬"
-        lines.append(f"{prefix} <b>{handle}</b>: {m['text'][:120]}")
-    await message.answer("\n".join(lines))
-
-
-# ============================================================
-# CALLBACK: СООБЩЕНИЯ
+# CALLBACK: СООБЩЕНИЕ ИГРОКУ
 # ============================================================
 @router.callback_query(F.data.startswith("msg_"))
 async def cb_msg(callback: CallbackQuery):
@@ -125,12 +91,27 @@ async def cb_msg(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("style_custom_"))
 async def cb_style_custom(callback: CallbackQuery):
+    """Пользователь жмёт «Написать своё» — создаём чат и запускаем ввод."""
     await callback.answer()
     target_id = int(callback.data.replace("style_custom_", ""))
-    PENDING_REPLY[callback.from_user.id] = target_id
+
+    async with async_session() as session:
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        if me is None:
+            await callback.message.answer("Сначала отправь фото!")
+            return
+
+        chat = await get_or_create_chat(session, me.id, target_id)
+
+    # Ставим в режим чата — обработчик в chats.py подхватит ввод
+    from bot.handlers.chats import PENDING_CHAT_REPLY
+    PENDING_CHAT_REPLY[callback.from_user.id] = chat.id
+
     await callback.message.answer(
-        "✍️ Напиши своё сообщение одним текстом. Оно будет доставлено получателю.\n\n"
-        "Чтобы отменить — отправь /cancel"
+        "✍️ Напиши своё сообщение одним текстом — оно уйдёт в чат.\n\n"
+        "Чтобы отменить — /cancel"
     )
 
 
@@ -188,13 +169,23 @@ async def cb_style(callback: CallbackQuery):
         ]
     )
 
-    PENDING_REPLY[f"sugg_{callback.from_user.id}"] = {"target_id": target_id, "messages": msgs}
+    # Сохраняем варианты в памяти chats.py — там их используют
+    from bot.handlers.chats import PENDING_CHAT_REPLY  # noqa
+    # Сохранение вариантов делаем через простой словарь тут
+    _SUGGESTIONS[f"sugg_{callback.from_user.id}"] = {
+        "target_id": target_id,
+        "messages": msgs,
+    }
 
     lines = ["💬 Варианты первого сообщения (нажми, чтобы отправить):"]
     for i, m in enumerate(msgs, 1):
         lines.append(f"{i}. {m}")
 
     await callback.message.answer("\n".join(lines) + extra_hint, reply_markup=kb)
+
+
+# Хранилище вариантов сообщений: ключ → {target_id, messages}
+_SUGGESTIONS: Dict[str, dict] = {}
 
 
 @router.callback_query(F.data.startswith("send_sugg_"))
@@ -206,41 +197,42 @@ async def cb_send_sugg(callback: CallbackQuery):
     target_id = int(parts[2])
     idx = int(parts[3])
 
-    payload = PENDING_REPLY.pop(f"sugg_{callback.from_user.id}", None)
+    payload = _SUGGESTIONS.pop(f"sugg_{callback.from_user.id}", None)
     if not payload:
         await callback.message.answer("Варианты устарели. Запроси заново.")
         return
 
     msg_text = payload["messages"][idx]
 
-    ok = await deliver_message(
+    async with async_session() as session:
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        if me is None:
+            await callback.message.answer("Сначала отправь фото!")
+            return
+        chat = await get_or_create_chat(session, me.id, target_id)
+
+    result = await send_chat_message(
         bot=callback.bot,
         sender_telegram_id=callback.from_user.id,
-        receiver_user_id=target_id,
+        chat_id=chat.id,
         text=msg_text,
         msg_type="text",
     )
 
-    if ok:
-        await track("message_sent", telegram_id=callback.from_user.id, payload={"type": "suggestion"})
-        await _check_message_achievement(callback.from_user.id)
-        await callback.message.answer(f"✅ Отправлено:\n\n<i>{msg_text}</i>")
+    if result:
+        await track("chat_message_sent", telegram_id=callback.from_user.id, payload={"type": "suggestion"})
+        await callback.message.answer(
+            f"✅ Отправлено:\n\n<i>{msg_text}</i>",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📜 Открыть чат", callback_data=f"chat_open_{chat.id}")],
+                ]
+            ),
+        )
     else:
         await callback.message.answer("❌ Не удалось доставить. Возможно, получатель отключил сообщения.")
-
-
-async def _check_message_achievement(telegram_id: int) -> None:
-    async with async_session() as session:
-        me = (await session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )).scalar_one_or_none()
-        if not me:
-            return
-        cnt = (await session.execute(
-            select(func.count(MessageModel.id)).where(MessageModel.sender_id == me.id)
-        )).scalar_one()
-        if cnt >= 10:
-            await unlock_achievement(me.id, "ten_messages")
 
 
 # ============================================================
@@ -249,7 +241,6 @@ async def _check_message_achievement(telegram_id: int) -> None:
 @router.callback_query(F.data.startswith("joke_"))
 async def cb_joke(callback: CallbackQuery):
     logger.info(f"Joke button pressed by {callback.from_user.id}: {callback.data}")
-
     try:
         await callback.answer()
     except Exception:
@@ -259,7 +250,6 @@ async def cb_joke(callback: CallbackQuery):
     try:
         target_id = int(target_id_str)
     except ValueError:
-        logger.warning(f"Invalid target_id in joke callback: {target_id_str}")
         await callback.message.answer("Некорректный игрок.")
         return
 
@@ -271,7 +261,6 @@ async def cb_joke(callback: CallbackQuery):
     if target is None:
         await callback.message.answer("Игрок не найден.")
         return
-
     if not target.allow_messages:
         await callback.message.answer("🚫 Этот игрок отключил сообщения.")
         return
@@ -292,7 +281,6 @@ async def cb_joke(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("jokecat_"))
 async def cb_jokecat(callback: CallbackQuery):
     logger.info(f"Joke category selected by {callback.from_user.id}: {callback.data}")
-
     try:
         await callback.answer()
     except Exception:
@@ -320,54 +308,32 @@ async def cb_jokecat(callback: CallbackQuery):
     if not joke:
         joke = "😂"
 
-    ok = await deliver_message(
+    async with async_session() as session:
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        if me is None:
+            await callback.message.answer("Сначала отправь фото!")
+            return
+        chat = await get_or_create_chat(session, me.id, target_id)
+
+    result = await send_chat_message(
         bot=callback.bot,
         sender_telegram_id=callback.from_user.id,
-        receiver_user_id=target_id,
+        chat_id=chat.id,
         text=joke,
         msg_type="joke",
     )
 
-    if ok:
+    if result:
         await track("joke_sent", telegram_id=callback.from_user.id, payload={"category": category})
-        await callback.message.answer(f"😂 Отправлено:\n\n{joke}")
+        await callback.message.answer(
+            f"😂 Отправлено:\n\n{joke}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📜 Открыть чат", callback_data=f"chat_open_{chat.id}")],
+                ]
+            ),
+        )
     else:
         await callback.message.answer("❌ Не удалось доставить. Возможно, получатель отключил сообщения.")
-
-
-# ============================================================
-# /cancel — отмена отправки сообщения
-# ============================================================
-@router.message(F.text == "/cancel")
-async def cmd_cancel(message: Message):
-    if PENDING_REPLY.pop(message.from_user.id, None) is not None:
-        await message.answer("❌ Отменено. Сообщение не отправлено.")
-    else:
-        await message.answer("Нечего отменять.")
-
-
-# ============================================================
-# CATCH-ALL — срабатывает ТОЛЬКО при активном ожидании отправки
-# ============================================================
-@router.message(F.text & ~F.text.startswith("/"), _is_waiting_reply)
-async def handle_custom_text(message: Message):
-    target_id = PENDING_REPLY.get(message.from_user.id)
-    if not target_id or isinstance(target_id, str):
-        return
-
-    PENDING_REPLY.pop(message.from_user.id, None)
-
-    ok = await deliver_message(
-        bot=message.bot,
-        sender_telegram_id=message.from_user.id,
-        receiver_user_id=target_id,
-        text=message.text[:1000],
-        msg_type="text",
-    )
-
-    if ok:
-        await track("message_sent", telegram_id=message.from_user.id, payload={"type": "custom"})
-        await _check_message_achievement(message.from_user.id)
-        await message.answer("✅ Сообщение доставлено!")
-    else:
-        await message.answer("❌ Не удалось доставить.")

@@ -18,7 +18,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="👥 Сравнить"),
-                KeyboardButton(text="📬 Входящие"),
+                KeyboardButton(text="💬 Мои чаты"),
             ],
             [
                 KeyboardButton(text="🎮 Социальная игра"),
@@ -54,10 +54,6 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 # SHARE
 # ============================================================
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
-    """
-    Кнопка «Поделиться» сначала вызывается как callback (для трекинга),
-    потом бот возвращает сообщение с реальной share-ссылкой.
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться с друзьями", callback_data="do_share")],
@@ -66,7 +62,6 @@ def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
 
 
 def share_link_kb(share_url: str) -> InlineKeyboardMarkup:
-    """Inline-кнопка с готовой ссылкой шаринга (открывает системный share)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Открыть шаринг", url=share_url)],

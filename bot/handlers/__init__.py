@@ -14,6 +14,7 @@ from bot.handlers import (
     subscriptions,
     blocking,
     advertising,
+    chats,
     messaging,
     support,
 )
@@ -22,47 +23,35 @@ from admin import handlers as admin_handlers
 
 def register_handlers(root_router: Router) -> None:
     """
-    Порядок регистрации роутеров:
-
-    1. Админка — первой (чтобы /admin, /reply, /wl_add были приоритетны).
-    2. Пользовательские с точными F.text == "..." — идут ДО catch-all.
-    3. Catch-all роутеры (messaging, support) — в САМОМ КОНЦЕ.
-
-    Внутри messaging.py и support.py catch-all хендлеры имеют
-    динамический фильтр (_is_waiting_reply / _is_waiting_ticket),
-    поэтому конфликтов между ними нет — порядок этих двух
-    роутеров не критичен.
+    Порядок регистрации:
+    1. Админка — первой.
+    2. Точные reply-хендлеры и callback-и.
+    3. Чаты — до messaging (там есть catch-all).
+    4. Catch-all (messaging, support) — в самом конце.
     """
-
-    # ============================================================
-    # 1. АДМИНКА
-    # ============================================================
+    # 1. Админка
     root_router.include_router(admin_handlers.router)
 
-    # ============================================================
-    # 2. ПОЛЬЗОВАТЕЛЬСКИЕ (точные F.text == "...")
-    # ============================================================
-    root_router.include_router(start.router)          # /start, /help, «📸 Новый анализ»
-    root_router.include_router(analysis.router)       # приём фото, do_share, new_analysis
-    root_router.include_router(profile.router)        # «👤 Мой профиль», «📤 Поделиться», «⚙️ Настройки»
-    root_router.include_router(matching.router)       # «🎯 Найти игроков» + режимы поиска
-    root_router.include_router(compare.router)        # «👥 Сравнить»
-    root_router.include_router(tests.router)          # «🧪 Пройти тест»
-    root_router.include_router(achievements.router)   # «🏆 Достижения»
-    root_router.include_router(game_opt_in.router)    # «🎮 Социальная игра»
-    root_router.include_router(privacy.router)        # настройки приватности
-    root_router.include_router(payments.router)       # «💎 PRO», промокоды
-    root_router.include_router(subscriptions.router)  # обязательные подписки
-    root_router.include_router(blocking.router)       # блокировка игроков
-    root_router.include_router(advertising.router)    # клики по рекламе
+    # 2. Пользовательские
+    root_router.include_router(start.router)
+    root_router.include_router(analysis.router)
+    root_router.include_router(profile.router)
+    root_router.include_router(matching.router)
+    root_router.include_router(compare.router)
+    root_router.include_router(tests.router)
+    root_router.include_router(achievements.router)
+    root_router.include_router(game_opt_in.router)
+    root_router.include_router(privacy.router)
+    root_router.include_router(payments.router)
+    root_router.include_router(subscriptions.router)
+    root_router.include_router(blocking.router)
+    root_router.include_router(advertising.router)
 
-    # ============================================================
-    # 3. CATCH-ALL — В САМОМ КОНЦЕ
-    # ============================================================
-    # messaging.handle_custom_text — сработает ТОЛЬКО если пользователь
-    # находится в PENDING_REPLY (ждёт отправки сообщения игроку)
+    # 3. Чаты — с catch-all для ввода текста
+    root_router.include_router(chats.router)
+
+    # 4. Приколы, стили, catch-all для «прикола»
     root_router.include_router(messaging.router)
 
-    # support.handle_support_message — сработает ТОЛЬКО если пользователь
-    # находится в PENDING_TICKET (ждёт отправки тикета)
+    # 5. Поддержка — последней
     root_router.include_router(support.router)
