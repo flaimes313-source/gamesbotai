@@ -169,18 +169,48 @@ class Match(Base):
 
 
 # ============================================================
+# CHATS (диалоги между игроками)
+# ============================================================
+class Chat(Base):
+    __tablename__ = "chats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user1_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user2_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+
+    user1_last_read_msg_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    user2_last_read_msg_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user1_id", "user2_id", name="uq_chat_pair"),
+    )
+
+
+# ============================================================
 # MESSAGES
 # ============================================================
 class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    chat_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("chats.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     receiver_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
 
     type: Mapped[str] = mapped_column(String(32), default="text")
     text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="sent")
+
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
