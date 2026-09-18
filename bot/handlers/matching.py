@@ -1,7 +1,7 @@
 from typing import Dict
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.keyboards.matching import match_actions_kb, modes_kb
 from config import config
@@ -24,7 +24,6 @@ logger = get_logger(__name__)
 # Память показанных кандидатов: telegram_id → {"mode":..., "shown_ids":[...]}
 SEARCH_STATE: Dict[int, dict] = {}
 
-# Режимы, требующие PRO/админ/whitelist-доступа
 PREMIUM_MODES = {"intellectual", "chaos"}
 
 
@@ -41,6 +40,22 @@ def _candidate_text(c: dict) -> str:
     )
 
 
+def _empty_candidates_kb(mode: str) -> InlineKeyboardMarkup:
+    """Кнопки, если больше нет кандидатов."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Показать заново",
+                callback_data=f"restart_mode_{mode}",
+            )],
+            [InlineKeyboardButton(
+                text="🎛 Сменить режим",
+                callback_data="find_players",
+            )],
+        ]
+    )
+
+
 async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: int) -> None:
     async with async_session() as session:
         me = await get_my_user(session, telegram_id)
@@ -50,7 +65,7 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
 
         state = SEARCH_STATE.setdefault(telegram_id, {"mode": mode, "shown_ids": []})
 
-        # Админ, whitelist и PRO получают расширенный лимит кандидатов
+        # Админ, whitelist и PRO получают расширенный лимит
         full = await has_full_access(telegram_id)
         limit = 50 if full else 20
 
@@ -63,9 +78,20 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
         )
 
     if not candidates:
-        await callback.message.answer(
-            "😔 Больше нет подходящих игроков. Попробуй другой режим или загляни позже!"
-        )
+        # Больше нет новых — предложим «Показать заново»
+        shown_count = len(state.get("shown_ids", []))
+        if shown_count == 0:
+            await callback.message.answer(
+                "😔 Пока нет подходящих игроков.\n\n"
+                "Пригласи друзей через «📤 Поделиться» или загляни позже!",
+                reply_markup=_empty_candidates_kb(mode),
+            )
+        else:
+            await callback.message.answer(
+                f"🎯 Ты уже посмотрел всех игроков в этом режиме ({shown_count}).\n\n"
+                f"Хочешь пройтись по ним заново?",
+                reply_markup=_empty_candidates_kb(mode),
+            )
         return
 
     c = candidates[0]
@@ -84,7 +110,7 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
     )
     await unlock_achievement(me.id, "first_match")
 
-    # AI-описание матча (не критично — если падает, просто без него)
+    # AI-описание матча
     description_line = ""
     try:
         async with async_session() as session:
@@ -155,6 +181,15 @@ async def next_candidate(callback: CallbackQuery):
     await callback.answer("Ищу следующего...")
     state = SEARCH_STATE.get(callback.from_user.id)
     mode = state["mode"] if state else "similar"
+    await _send_next_candidate(callback, mode, callback.from_user.id)
+
+
+@router.callback_query(F.data.startswith("restart_mode_"))
+async def restart_mode(callback: CallbackQuery):
+    """Сброс shown_ids и повторный запуск того же режима."""
+    await callback.answer("Показываю заново...")
+    mode = callback.data.replace("restart_mode_", "")
+    SEARCH_STATE[callback.from_user.id] = {"mode": mode, "shown_ids": []}
     await _send_next_candidate(callback, mode, callback.from_user.id)
 
 
