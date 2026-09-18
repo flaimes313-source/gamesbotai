@@ -47,17 +47,29 @@ def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура категорий приколов.
+    Из JSON-списка исключаем "Случайный"/"random" — чтобы не было дубля,
+    потому что кнопку "🎲 Случайный" добавляем мы сами.
+    """
     try:
         cats = categories()
+        cats = [
+            c for c in cats
+            if c.lower() not in ("случайный", "random")
+        ]
     except Exception:
         logger.exception("Failed to load joke categories")
-        cats = ["Случайный"]
+        cats = []
 
     rows = [
         [InlineKeyboardButton(text=f"📂 {c}", callback_data=f"jokecat_{c}_{target_user_id}")]
         for c in cats
     ]
-    rows.append([InlineKeyboardButton(text="🎲 Случайный", callback_data=f"jokecat_random_{target_user_id}")])
+    rows.append([InlineKeyboardButton(
+        text="🎲 Случайный",
+        callback_data=f"jokecat_random_{target_user_id}",
+    )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -251,7 +263,6 @@ async def cb_joke(callback: CallbackQuery):
         await callback.message.answer("Некорректный игрок.")
         return
 
-    # Проверим, что игрок существует и разрешает сообщения
     async with async_session() as session:
         target = (await session.execute(
             select(User).where(User.id == target_id)
@@ -265,9 +276,16 @@ async def cb_joke(callback: CallbackQuery):
         await callback.message.answer("🚫 Этот игрок отключил сообщения.")
         return
 
+    try:
+        kb = jokes_categories_kb(target_id)
+    except Exception:
+        logger.exception("Failed to build jokes keyboard")
+        await callback.message.answer("😔 Приколы временно недоступны. Попробуй позже.")
+        return
+
     await callback.message.answer(
         "😄 Выбери категорию прикола:",
-        reply_markup=jokes_categories_kb(target_id),
+        reply_markup=kb,
     )
 
 
@@ -292,17 +310,16 @@ async def cb_jokecat(callback: CallbackQuery):
         await callback.message.answer("Некорректный игрок.")
         return
 
-    # Получаем прикол
     try:
         joke = random_joke(None if category == "random" else category)
     except Exception:
         logger.exception("Failed to get joke")
-        joke = "😂 Жизнь — боль, но ты держись!"
+        await callback.message.answer("😔 Приколы временно недоступны.")
+        return
 
     if not joke:
         joke = "😂"
 
-    # Доставляем
     ok = await deliver_message(
         bot=callback.bot,
         sender_telegram_id=callback.from_user.id,
