@@ -47,9 +47,15 @@ def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
 
 
 def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
+    try:
+        cats = categories()
+    except Exception:
+        logger.exception("Failed to load joke categories")
+        cats = ["Случайный"]
+
     rows = [
         [InlineKeyboardButton(text=f"📂 {c}", callback_data=f"jokecat_{c}_{target_user_id}")]
-        for c in categories()
+        for c in cats
     ]
     rows.append([InlineKeyboardButton(text="🎲 Случайный", callback_data=f"jokecat_random_{target_user_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -156,7 +162,6 @@ async def cb_style(callback: CallbackQuery):
         await callback.message.answer("Не удалось сгенерировать. Попробуй позже.")
         return
 
-    # Админ, whitelist и PRO получают все 3 варианта
     full = await has_full_access(callback.from_user.id)
     extra_hint = ""
 
@@ -231,8 +236,35 @@ async def _check_message_achievement(telegram_id: int) -> None:
 # ============================================================
 @router.callback_query(F.data.startswith("joke_"))
 async def cb_joke(callback: CallbackQuery):
-    await callback.answer()
-    target_id = int(callback.data.replace("joke_", ""))
+    logger.info(f"Joke button pressed by {callback.from_user.id}: {callback.data}")
+
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+    target_id_str = callback.data.replace("joke_", "")
+    try:
+        target_id = int(target_id_str)
+    except ValueError:
+        logger.warning(f"Invalid target_id in joke callback: {target_id_str}")
+        await callback.message.answer("Некорректный игрок.")
+        return
+
+    # Проверим, что игрок существует и разрешает сообщения
+    async with async_session() as session:
+        target = (await session.execute(
+            select(User).where(User.id == target_id)
+        )).scalar_one_or_none()
+
+    if target is None:
+        await callback.message.answer("Игрок не найден.")
+        return
+
+    if not target.allow_messages:
+        await callback.message.answer("🚫 Этот игрок отключил сообщения.")
+        return
+
     await callback.message.answer(
         "😄 Выбери категорию прикола:",
         reply_markup=jokes_categories_kb(target_id),
@@ -241,15 +273,36 @@ async def cb_joke(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("jokecat_"))
 async def cb_jokecat(callback: CallbackQuery):
-    await callback.answer()
+    logger.info(f"Joke category selected by {callback.from_user.id}: {callback.data}")
+
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     parts = callback.data.split("_", 2)
     if len(parts) < 3:
+        await callback.message.answer("Ошибка: неверный формат.")
         return
+
     _, category, target_id_str = parts
-    target_id = int(target_id_str)
+    try:
+        target_id = int(target_id_str)
+    except ValueError:
+        await callback.message.answer("Некорректный игрок.")
+        return
 
-    joke = random_joke(None if category == "random" else category)
+    # Получаем прикол
+    try:
+        joke = random_joke(None if category == "random" else category)
+    except Exception:
+        logger.exception("Failed to get joke")
+        joke = "😂 Жизнь — боль, но ты держись!"
 
+    if not joke:
+        joke = "😂"
+
+    # Доставляем
     ok = await deliver_message(
         bot=callback.bot,
         sender_telegram_id=callback.from_user.id,
@@ -262,7 +315,7 @@ async def cb_jokecat(callback: CallbackQuery):
         await track("joke_sent", telegram_id=callback.from_user.id, payload={"category": category})
         await callback.message.answer(f"😂 Отправлено:\n\n{joke}")
     else:
-        await callback.message.answer("❌ Не доставлено.")
+        await callback.message.answer("❌ Не удалось доставить. Возможно, получатель отключил сообщения.")
 
 
 # ============================================================
@@ -282,7 +335,7 @@ async def cmd_cancel(message: Message):
 @router.message(F.text & ~F.text.startswith("/"), _is_waiting_reply)
 async def handle_custom_text(message: Message):
     target_id = PENDING_REPLY.get(message.from_user.id)
-    if not target_id or isinstance(target_id, str):  # защита от sugg_
+    if not target_id or isinstance(target_id, str):
         return
 
     PENDING_REPLY.pop(message.from_user.id, None)
