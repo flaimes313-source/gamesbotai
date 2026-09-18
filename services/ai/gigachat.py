@@ -21,7 +21,73 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================
+# Утилиты: определение MIME по magic bytes
+# ============================================================
+def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "jpg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "gif"
+    if image_bytes[:2] == b"BM":
+        return "image/bmp", "bmp"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp", "webp"
+    # fallback — Telegram по умолчанию шлёт JPEG
+    return "image/jpeg", "jpg"
+
+
+# ============================================================
+# Утилиты: устойчивый парсинг JSON
+# ============================================================
+def _try_fix_json(text: str) -> str:
+    """
+    Автопочинка частых ошибок LLM в JSON:
+
+    1. Пропущенная запятая между двумя строками в массиве:
+       "текст1"
+       "текст2"
+       → "текст1",
+         "текст2"
+
+    2. Висящая запятая перед закрывающей скобкой:
+       ["a", "b",]
+       → ["a", "b"]
+
+    3. Одинарные кавычки вокруг ключей/значений (простой случай).
+
+    4. Управляющие символы (переносы строк) внутри строк не трогаем —
+       их парсер и так скушает.
+    """
+    s = text
+
+    # 1. Убираем висящие запятые перед ] или }
+    s = re.sub(r",(\s*[}\]])", r"\1", s)
+
+    # 2. Добавляем запятую между двумя строками в массиве.
+    #    Ищем: закрывающая кавычка, опциональные пробелы/новые строки,
+    #    потом сразу открывающая кавычка без запятой между ними.
+    #    Работает для случаев:
+    #       "текст1"
+    #       "текст2"
+    s = re.sub(r'"\s*\n\s*"', '",\n    "', s)
+
+    # 3. Иногда пропущена запятая в одной строке: "...текст" "текст..."
+    s = re.sub(r'"\s+"', '", "', s)
+
+    return s
+
+
 def _extract_json(text: str) -> Dict[str, Any]:
+    """
+    Достаём JSON из ответа модели.
+    Пробуем несколько стратегий:
+    1. Как есть.
+    2. Отрезаем первый {...} блок и парсим.
+    3. Пробуем починить типичные ошибки (пропущенные запятые) и парсить снова.
+    """
     if not text:
         raise ValueError("Empty AI response")
 
@@ -36,29 +102,29 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
     json_str = cleaned[start : end + 1]
 
+    # Попытка 1: как есть
     try:
         return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}. Raw: {json_str[:300]}")
-        raise
+    except json.JSONDecodeError as e1:
+        logger.warning(f"[JSON] First parse failed: {e1}. Trying to fix…")
+
+    # Попытка 2: автопочинка
+    fixed = _try_fix_json(json_str)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError as e2:
+        logger.error(f"[JSON] Fix attempt failed: {e2}. Raw: {json_str[:400]}")
+        raise ValueError(
+            f"Could not parse AI JSON after fix: {e2}. "
+            f"Raw preview: {json_str[:200]}"
+        )
 
 
-def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
-    if image_bytes[:3] == b"\xff\xd8\xff":
-        return "image/jpeg", "jpg"
-    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png", "png"
-    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif", "gif"
-    if image_bytes[:2] == b"BM":
-        return "image/bmp", "bmp"
-    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
-        return "image/webp", "webp"
-    return "image/jpeg", "jpg"
-
-
+# ============================================================
+# Провайдер GigaChat
+# ============================================================
 class GigaChatProvider(AIProvider):
-    """Реализация AIProvider поверх SDK GigaChat."""
+    """Реализация AIProvider поверх официального SDK GigaChat."""
 
     def __init__(self) -> None:
         self._client: GigaChat = GigaChat(
@@ -99,6 +165,44 @@ class GigaChatProvider(AIProvider):
             return response.choices[0].message.content
 
         return await asyncio.to_thread(_sync_call)
+
+    # --------------------------------------------------------
+    # Утилита: вызов с retry на битый JSON
+    # --------------------------------------------------------
+    async def _chat_json(
+        self,
+        messages: List[Messages],
+        temperature_first: float = 0.7,
+        temperature_retry: float = 0.3,
+        max_tokens: int = 500,
+        model: Optional[str] = None,
+        log_tag: str = "JSON",
+    ) -> Dict[str, Any]:
+        """
+        Двухэтапный вызов:
+        1. temperature_first → парсим JSON.
+        2. Если не получилось — temperature_retry (ниже) → парсим JSON.
+        """
+        # Попытка 1
+        try:
+            raw = await self._chat(
+                messages,
+                temperature=temperature_first,
+                max_tokens=max_tokens,
+                model=model,
+            )
+            return _extract_json(raw)
+        except Exception as e1:
+            logger.warning(f"[{log_tag}] Attempt 1 failed: {e1}. Retrying with temp={temperature_retry}…")
+
+        # Попытка 2
+        raw = await self._chat(
+            messages,
+            temperature=temperature_retry,
+            max_tokens=max_tokens,
+            model=model,
+        )
+        return _extract_json(raw)
 
     # --------------------------------------------------------
     # Анализ фото (Vision)
@@ -158,8 +262,13 @@ class GigaChatProvider(AIProvider):
             creativity=profile.get("creativity", 0),
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=400)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=400,
+            log_tag="DAILY",
+        )
 
     # --------------------------------------------------------
     # Описание Match
@@ -186,8 +295,13 @@ class GigaChatProvider(AIProvider):
             match_score=match_score,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="MATCH",
+        )
 
     # --------------------------------------------------------
     # Варианты первого сообщения
@@ -206,8 +320,13 @@ class GigaChatProvider(AIProvider):
             style=style,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="MSG_HELPER",
+        )
 
     # --------------------------------------------------------
     # Вопрос теста
@@ -222,8 +341,13 @@ class GigaChatProvider(AIProvider):
             test_description=test_description or "",
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="TEST_Q",
+        )
 
     # --------------------------------------------------------
     # Результат теста
@@ -239,11 +363,16 @@ class GigaChatProvider(AIProvider):
             answers=answers_text,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="TEST_R",
+        )
 
     # --------------------------------------------------------
-    # НОВОЕ: AI-подсказки для ответа в чате
+    # AI-подсказки для ответа в чате (PRO)
     # --------------------------------------------------------
     async def generate_chat_reply_suggestions(
         self,
@@ -266,11 +395,16 @@ class GigaChatProvider(AIProvider):
             history=history_text,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.7,
+            temperature_retry=0.3,
+            max_tokens=600,
+            log_tag="CHAT_REPLY",
+        )
 
     # --------------------------------------------------------
-    # НОВОЕ: анализ переписки
+    # Анализ переписки (PRO)
     # --------------------------------------------------------
     async def analyze_chat(
         self,
@@ -293,5 +427,10 @@ class GigaChatProvider(AIProvider):
             history=history_text,
         )
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-        raw = await self._chat(messages, temperature=0.9, max_tokens=500)
-        return _extract_json(raw)
+        return await self._chat_json(
+            messages,
+            temperature_first=0.7,
+            temperature_retry=0.3,
+            max_tokens=500,
+            log_tag="CHAT_ANALYZE",
+        )

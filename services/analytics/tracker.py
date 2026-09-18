@@ -9,8 +9,9 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Все допустимые имена событий (см. ТЗ п.44)
+# Все допустимые имена событий (см. ТЗ п.44 + добавленные)
 EVENT_NAMES = {
+    # Пользовательские
     "new_users",
     "photo_sent",
     "analysis_started",
@@ -19,21 +20,40 @@ EVENT_NAMES = {
     "share_generated",
     "referral_opened",
     "referral_completed",
+    "second_analysis",
+
+    # Игра
     "game_opt_in",
     "game_opt_out",
+
+    # Поиск
     "search_used",
     "match_created",
-    "message_sent",
-    "joke_sent",
-    "second_analysis",
+    "block_user",
+
+    # Тесты
     "test_started",
     "test_completed",
+
+    # Монетизация
     "pro_purchase",
     "subscription_offer_shown",
     "subscription_confirmed",
     "ad_shown",
     "ad_clicked",
-    "block_user",
+
+    # Уведомления
+    "daily_sent",
+
+    # ЧАТЫ (новое)
+    "chats_list_viewed",
+    "chat_message_sent",
+    "chat_ai_sent",
+    "chat_ai_analyzed",
+
+    # Архив (оставил, чтобы не потерять)
+    "message_sent",
+    "joke_sent",
     "inbox_viewed",
 }
 
@@ -46,9 +66,6 @@ async def track(
 ) -> None:
     """
     Записывает событие в БД.
-
-    Можно передавать либо telegram_id, либо user_id — сервис сам
-    подтянет второго, если нужно.
     """
     if name not in EVENT_NAMES:
         logger.warning(f"Unknown event name: {name}")
