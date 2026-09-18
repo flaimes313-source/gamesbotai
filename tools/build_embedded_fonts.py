@@ -100,3 +100,4 @@ def get_bold_font_bytes() -> bytes:
 
 if __name__ == "__main__":
     sys.exit(main())
+    

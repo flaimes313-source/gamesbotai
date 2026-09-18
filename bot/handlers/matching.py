@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from bot.keyboards.matching import match_actions_kb, modes_kb
 from config import config
 from database.connection import async_session
+from services.access import has_full_access
 from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
@@ -15,14 +16,15 @@ from services.matching.matcher import (
     get_my_profile,
     get_my_user,
 )
-from services.premium import is_premium
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
+# Память показанных кандидатов: telegram_id → {"mode":..., "shown_ids":[...]}
 SEARCH_STATE: Dict[int, dict] = {}
 
+# Режимы, требующие PRO/админ/whitelist-доступа
 PREMIUM_MODES = {"intellectual", "chaos"}
 
 
@@ -48,7 +50,10 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
 
         state = SEARCH_STATE.setdefault(telegram_id, {"mode": mode, "shown_ids": []})
 
-        limit = 50 if await is_premium(telegram_id) else 20
+        # Админ, whitelist и PRO получают расширенный лимит кандидатов
+        full = await has_full_access(telegram_id)
+        limit = 50 if full else 20
+
         candidates = await find_candidates(
             session,
             me.id,
@@ -67,6 +72,7 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
     state["shown_ids"].append(c["user_id"])
     state["mode"] = mode
 
+    # Сохраняем запись о матче в БД
     async with async_session() as session:
         me = await get_my_user(session, telegram_id)
         await create_match_record(session, me.id, c["user_id"], mode, c["score"])
@@ -78,7 +84,7 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
     )
     await unlock_achievement(me.id, "first_match")
 
-    # AI-описание
+    # AI-описание матча (не критично — если падает, просто без него)
     description_line = ""
     try:
         async with async_session() as session:
@@ -107,6 +113,9 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
     await callback.message.answer(text, reply_markup=match_actions_kb(c["user_id"], c["score"]))
 
 
+# ============================================================
+# REPLY-КНОПКА «🎯 Найти игроков»
+# ============================================================
 @router.message(F.text == "🎯 Найти игроков")
 async def find_players(message: Message):
     if not config.MATCHING_ENABLED:
@@ -115,6 +124,9 @@ async def find_players(message: Message):
     await message.answer("Выбери режим поиска:", reply_markup=modes_kb())
 
 
+# ============================================================
+# CALLBACK-И
+# ============================================================
 @router.callback_query(F.data.startswith("mode_"))
 async def mode_selected(callback: CallbackQuery):
     await callback.answer()
@@ -124,10 +136,11 @@ async def mode_selected(callback: CallbackQuery):
 
     mode = callback.data.replace("mode_", "")
 
+    # PRO-режимы: доступны админам, whitelist и PRO
     if mode in PREMIUM_MODES:
-        if not await is_premium(callback.from_user.id):
+        if not await has_full_access(callback.from_user.id):
             await callback.message.answer(
-                "💎 Этот режим доступен только с PRO.\n"
+                "💎 Этот режим доступен только с PRO.\n\n"
                 "Оформить: /start → 💎 PRO"
             )
             return

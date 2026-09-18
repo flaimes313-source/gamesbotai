@@ -9,12 +9,12 @@ from sqlalchemy import func, select
 
 from database.connection import async_session
 from database.models import Message as MessageModel, User
+from services.access import has_full_access
 from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
 from services.jokes import categories, random_joke
 from services.messaging import deliver_message, get_inbox
-from services.premium import is_premium
 from utils.logging import get_logger
 
 router = Router()
@@ -156,10 +156,11 @@ async def cb_style(callback: CallbackQuery):
         await callback.message.answer("Не удалось сгенерировать. Попробуй позже.")
         return
 
-    premium = await is_premium(callback.from_user.id)
+    # Админ, whitelist и PRO получают все 3 варианта
+    full = await has_full_access(callback.from_user.id)
     extra_hint = ""
 
-    if not premium:
+    if not full:
         msgs = msgs[:1]
         extra_hint = "\n\n💎 С PRO — все 3 варианта на выбор."
 
