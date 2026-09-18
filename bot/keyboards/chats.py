@@ -8,7 +8,7 @@ def chat_actions_kb(
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура под открытым чатом.
-    Если is_pro — добавляем AI-кнопки.
+    is_pro=True → добавляем AI-кнопки.
     """
     rows = [
         [InlineKeyboardButton(
@@ -44,6 +44,11 @@ def chat_actions_kb(
         )])
 
     rows.append([InlineKeyboardButton(
+        text="🚫 Пожаловаться",
+        callback_data=f"chat_report_{chat_id}",
+    )])
+
+    rows.append([InlineKeyboardButton(
         text="⬅️ К списку чатов",
         callback_data="chat_list",
     )])
@@ -60,7 +65,6 @@ def chat_list_back_kb() -> InlineKeyboardMarkup:
 
 
 def chat_ai_suggestions_kb(chat_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура с вариантами ответа — подставляются динамически."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(

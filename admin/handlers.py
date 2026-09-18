@@ -28,15 +28,13 @@ from database.models import (
 from services.advertising.reports import ads_report, format_ads_report
 from services.analytics.funnel import format_funnel, get_funnel
 from services.experiments_report import ab_photo_prompt_report, format_ab_report
-from services.metrics import full_stats
+from services.metrics import chats_stats, full_stats
 from services.whitelist import add_to_whitelist, remove_from_whitelist
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
-
-# Состояние ввода админа: admin_tg → {"action": "...", "data": {...}}
 ADMIN_STATE: dict[int, dict] = {}
 
 
@@ -45,7 +43,6 @@ def _is_admin(telegram_id: int) -> bool:
 
 
 async def _safe_answer(callback: CallbackQuery, text: str | None = None) -> None:
-    """Безопасный callback.answer — игнорируем 'query is too old'."""
     try:
         await callback.answer(text)
     except TelegramBadRequest as e:
@@ -58,7 +55,6 @@ async def _safe_answer(callback: CallbackQuery, text: str | None = None) -> None
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not _is_admin(message.from_user.id):
-        # Для не-админов команда не существует — молчим
         return
     await message.answer("🛠 <b>Админ-панель</b>", reply_markup=admin_menu_kb())
 
@@ -104,10 +100,45 @@ async def cb_stats(callback: CallbackQuery):
         f"📸 Analyses: {stats['analyses']}\n"
         f"🎯 Matches: {stats['matches']}\n"
         f"💬 Messages: {stats['messages']}\n"
+        f"💬 Chats: {stats['chats_total']}\n"
         f"🧪 Tests: {stats['tests']}\n\n"
         f"💰 PRO revenue: {stats['pro_revenue']:.2f} ₽"
     )
     await callback.message.answer(text)
+
+
+# ============================================================
+# ЧАТЫ
+# ============================================================
+@router.callback_query(F.data == "adm_chats")
+async def cb_admin_chats(callback: CallbackQuery):
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        stats = await chats_stats(days=7)
+    except Exception:
+        logger.exception("Chats stats failed")
+        await callback.message.answer("❌ Не удалось получить статистику.")
+        return
+
+    lines = [
+        f"💬 <b>Статистика чатов (за {stats['days']} дней)</b>\n",
+        f"📊 Всего чатов: <b>{stats['total_chats']}</b>",
+        f"🔥 Активных: <b>{stats['active_chats']}</b>",
+        f"✉️ Сообщений: <b>{stats['total_messages']}</b>",
+        f"📈 Средне: <b>{stats['avg_messages']}</b> сообщений на активный чат\n",
+        "🏆 <b>Топ-5 активных диалогов:</b>",
+    ]
+    for t in stats["top"]:
+        lines.append(
+            f"#{t['chat_id']}: {t['user1']} ↔ {t['user2']} — {t['count']} сообщений"
+        )
+    if not stats["top"]:
+        lines.append("<i>Нет активных диалогов</i>")
+
+    await callback.message.answer("\n".join(lines))
 
 
 # ============================================================
@@ -200,10 +231,7 @@ async def cmd_wl_add(message: Message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
-        await message.answer(
-            "Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>\n"
-            "Например: <code>/wl_add 123456789 VIP</code>"
-        )
+        await message.answer("Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>")
         return
 
     try:
@@ -531,7 +559,7 @@ async def cb_pay(callback: CallbackQuery):
 
 
 # ============================================================
-# ПОДДЕРЖКА (тикеты)
+# ПОДДЕРЖКА
 # ============================================================
 @router.callback_query(F.data == "adm_support")
 async def cb_support(callback: CallbackQuery):
@@ -611,7 +639,7 @@ async def cmd_reply(message: Message):
 
 
 # ============================================================
-# ВВОД ТЕКСТА ОТ АДМИНА (пошаговые диалоги)
+# ВВОД ТЕКСТА ОТ АДМИНА
 # ============================================================
 @router.message(F.text, lambda m: m.from_user.id in ADMIN_STATE)
 async def admin_input(message: Message):
@@ -624,7 +652,6 @@ async def admin_input(message: Message):
 
     action = state.get("action")
 
-    # ---------- Реклама ----------
     if action == "ads_new_step1":
         parts = [p.strip() for p in message.text.split("|", 1)]
         if len(parts) != 2:
@@ -646,7 +673,6 @@ async def admin_input(message: Message):
         )
         return
 
-    # ---------- Подписки ----------
     if action == "subs_new_step1":
         parts = [p.strip() for p in message.text.split("|")]
         if len(parts) != 3:
@@ -680,7 +706,6 @@ async def admin_input(message: Message):
         )
         return
 
-    # ---------- Промокоды ----------
     if action == "promos_new_step1":
         parts = [p.strip() for p in message.text.split("|")]
         if len(parts) != 3:
@@ -712,6 +737,5 @@ async def admin_input(message: Message):
         await message.answer(f"✅ Промокод <code>{code}</code> создан ({days} дней, макс {max_uses}).")
         return
 
-    # ---------- Неизвестная команда ----------
     ADMIN_STATE.pop(message.from_user.id, None)
     await message.answer("Неизвестная команда.")

@@ -38,6 +38,9 @@ try:
     _log_boot("Importing daily_sender...")
     from services.notifications.daily_sender import daily_loop
 
+    _log_boot("Importing chat_reminder...")
+    from services.notifications.chat_reminder import chat_reminder_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -46,29 +49,17 @@ except Exception as e:
 
 
 async def setup_commands(bot: Bot) -> None:
-    """
-    Устанавливает команды:
-    - для всех пользователей: /start, /help
-    - для админов: + /admin, /reply, /wl_add, /wl_remove
-    """
-    # 1. Дефолтные команды для всех
     public_commands = [
         BotCommand(command="start", description="Начать работу"),
         BotCommand(command="help", description="Помощь"),
     ]
-    await bot.set_my_commands(
-        public_commands,
-        scope=BotCommandScopeDefault(),
-    )
+    await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
 
-    # 2. Расширенный набор для каждого админа
     admin_commands = public_commands + [
         BotCommand(command="admin", description="Админ-панель"),
-        BotCommand(command="reply", description="Ответить в тикет"),
         BotCommand(command="wl_add", description="Добавить в whitelist"),
         BotCommand(command="wl_remove", description="Удалить из whitelist"),
     ]
-
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.set_my_commands(
@@ -133,6 +124,12 @@ async def main() -> None:
         asyncio.create_task(daily_loop(bot))
     except Exception:
         logger.exception("Failed to start daily loop")
+
+    logger.info("Starting chat reminder loop...")
+    try:
+        asyncio.create_task(chat_reminder_loop(bot))
+    except Exception:
+        logger.exception("Failed to start chat reminder loop")
 
     logger.info("Polling started.")
     try:

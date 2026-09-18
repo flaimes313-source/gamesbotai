@@ -7,15 +7,16 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from bot.keyboards.chats import (
     chat_actions_kb,
     chat_ai_suggestions_kb,
     chat_list_back_kb,
 )
+from config import config
 from database.connection import async_session
-from database.models import Chat, User
+from database.models import Chat, ChatReport, User
 from services.access import has_full_access
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
@@ -31,13 +32,12 @@ from utils.logging import get_logger
 router = Router()
 logger = get_logger(__name__)
 
-# Пользователь, ожидающий ввода текста в чат: telegram_id → chat_id
 PENDING_CHAT_REPLY: Dict[int, int] = {}
 
+# Хранилище AI-вариантов: ключ → {chat_id, suggestions}
+_AI_SUGGESTIONS: Dict[str, dict] = {}
 
-# ============================================================
-# Фильтр для catch-all
-# ============================================================
+
 def _is_waiting_chat_reply(message: Message) -> bool:
     return PENDING_CHAT_REPLY.get(message.from_user.id) is not None
 
@@ -301,8 +301,6 @@ async def cb_chat_ai_reply(callback: CallbackQuery):
         callback_data=f"chat_open_{chat_id}",
     )])
 
-    # Сохраняем варианты
-    from bot.handlers.chats import _AI_SUGGESTIONS
     _AI_SUGGESTIONS[f"ai_{callback.from_user.id}"] = {
         "chat_id": chat_id,
         "suggestions": suggestions,
@@ -314,15 +312,10 @@ async def cb_chat_ai_reply(callback: CallbackQuery):
     )
 
 
-# Хранилище AI-вариантов: ключ → {chat_id, suggestions}
-_AI_SUGGESTIONS: Dict[str, dict] = {}
-
-
 @router.callback_query(F.data.startswith("chat_ai_send_"))
 async def cb_chat_ai_send(callback: CallbackQuery):
     await callback.answer("Отправляю...")
     parts = callback.data.split("_")
-    # chat_ai_send_<chat_id>_<idx>
     if len(parts) < 5:
         return
     chat_id = int(parts[3])
@@ -460,6 +453,78 @@ async def cb_chat_ai_locked(callback: CallbackQuery):
 
 
 # ============================================================
+# Жалоба на пользователя
+# ============================================================
+@router.callback_query(F.data.startswith("chat_report_"))
+async def cb_chat_report(callback: CallbackQuery):
+    await callback.answer()
+    chat_id = int(callback.data.replace("chat_report_", ""))
+
+    async with async_session() as session:
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        if me is None:
+            return
+
+        chat = (await session.execute(
+            select(Chat).where(Chat.id == chat_id)
+        )).scalar_one_or_none()
+        if chat is None or me.id not in (chat.user1_id, chat.user2_id):
+            await callback.message.answer("Чат не найден.")
+            return
+
+        other_id = chat.user2_id if chat.user1_id == me.id else chat.user1_id
+
+        report = ChatReport(
+            chat_id=chat.id,
+            reporter_id=me.id,
+            target_id=other_id,
+            reason=None,
+            status="open",
+        )
+        session.add(report)
+        await session.commit()
+        await session.refresh(report)
+
+        count_reports = (await session.execute(
+            select(func.count(ChatReport.id))
+            .where(ChatReport.target_id == other_id)
+            .where(ChatReport.status == "open")
+        )).scalar_one()
+
+    await callback.message.answer(
+        "🚫 <b>Жалоба отправлена</b>\n\n"
+        "Мы проверим этого пользователя.\n"
+        "Спасибо, что помогаешь делать игру безопаснее."
+    )
+
+    # Автоблокировка при 3+ жалобах
+    if count_reports >= 3:
+        async with async_session() as session:
+            target = (await session.execute(
+                select(User).where(User.id == other_id)
+            )).scalar_one_or_none()
+            if target and not target.is_blocked:
+                target.is_blocked = True
+                await session.commit()
+                logger.warning(f"Auto-blocked user {target.id} due to {count_reports} reports")
+
+    # Уведомление админам
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                f"🚫 <b>Новая жалоба</b>\n\n"
+                f"На: user_id={other_id}\n"
+                f"Всего жалоб: {count_reports}\n"
+                f"Чат: #{chat_id}"
+            )
+        except Exception:
+            pass
+
+
+# ============================================================
 # /cancel
 # ============================================================
 @router.message(F.text == "/cancel")
@@ -507,7 +572,7 @@ async def handle_chat_reply(message: Message):
 
 
 # ============================================================
-# Универсальная отправка
+# Универсальный ответ
 # ============================================================
 async def _reply(message_or_callback, text: str, kb) -> None:
     if isinstance(message_or_callback, CallbackQuery):

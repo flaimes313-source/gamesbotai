@@ -169,7 +169,7 @@ class Match(Base):
 
 
 # ============================================================
-# CHATS (диалоги между игроками)
+# CHATS (диалоги)
 # ============================================================
 class Chat(Base):
     __tablename__ = "chats"
@@ -212,6 +212,21 @@ class Message(Base):
 
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ============================================================
+# CHAT REPORTS (жалобы)
+# ============================================================
+class ChatReport(Base):
+    __tablename__ = "chat_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"), index=True)
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

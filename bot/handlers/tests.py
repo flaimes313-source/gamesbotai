@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 
 from database.connection import async_session
 from database.models import Test, User, UserTest
+from services.access import has_full_access
 from services.achievements import unlock_achievement
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
@@ -13,24 +14,54 @@ router = Router()
 logger = get_logger(__name__)
 
 ACTIVE_TESTS: dict[int, dict] = {}
-
 TOTAL_QUESTIONS = 5
 
 
-async def _tests_menu_kb() -> InlineKeyboardMarkup:
+async def _tests_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    """Меню тестов: PRO видит все, обычные — только бесплатные + PRO-заглушки."""
+    full = await has_full_access(telegram_id)
+
     async with async_session() as session:
         tests = (await session.execute(
             select(Test).where(Test.is_active.is_(True)).order_by(Test.sort_order)
         )).scalars().all()
 
-    rows = [[InlineKeyboardButton(text=f"🧪 {t.name}", callback_data=f"test_start_{t.id}")] for t in tests]
+    rows = []
+    for t in tests:
+        if t.is_premium and not full:
+            # Показываем как PRO, но помечаем
+            rows.append([InlineKeyboardButton(
+                text=f"💎 {t.name}",
+                callback_data=f"test_locked_{t.id}",
+            )])
+        else:
+            emoji = "🧪" if not t.is_premium else "💎🧪"
+            rows.append([InlineKeyboardButton(
+                text=f"{emoji} {t.name}",
+                callback_data=f"test_start_{t.id}",
+            )])
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.callback_query(F.data == "tests_menu")
 async def cb_tests_menu(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.answer("🧪 Выбери тест:", reply_markup=await _tests_menu_kb())
+    await callback.message.answer(
+        "🧪 Выбери тест:",
+        reply_markup=await _tests_menu_kb(callback.from_user.id),
+    )
+
+
+@router.callback_query(F.data.startswith("test_locked_"))
+async def cb_test_locked(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(
+        "💎 <b>Этот тест доступен только с PRO</b>\n\n"
+        "С PRO ты получаешь доступ ко всем тестам, "
+        "включая расширенные и специальные.\n\n"
+        "Оформить: /start → 💎 PRO"
+    )
 
 
 async def _send_question(callback: CallbackQuery, question: dict):
@@ -64,6 +95,11 @@ async def cb_test_start(callback: CallbackQuery):
 
     if test is None:
         await callback.message.answer("Тест не найден.")
+        return
+
+    # Двойная проверка: PRO-тест и нет доступа
+    if test.is_premium and not await has_full_access(callback.from_user.id):
+        await callback.message.answer("💎 Этот тест доступен только с PRO.")
         return
 
     await callback.message.answer(f"🧪 Загружаю тест «{test.name}»...")
