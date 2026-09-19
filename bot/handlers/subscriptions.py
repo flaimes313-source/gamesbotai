@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,6 +8,7 @@ from config import config
 from database.connection import async_session
 from database.models import SubscriptionCampaign, SubscriptionEvent, User
 from services.analytics.tracker import track
+from services.feature_flags import is_enabled
 from services.subscriptions.checker import is_subscribed
 from services.whitelist import is_whitelisted
 from utils.logging import get_logger
@@ -19,21 +20,12 @@ OFFER_COOLDOWN_DAYS = 7
 
 
 async def maybe_offer_subscription(bot, telegram_id: int) -> None:
-    """
-    Показывает оффер обязательной подписки не чаще раза в 7 дней.
-    Пропускает:
-    - админов
-    - пользователей в whitelist
-    - тех, кто уже подтвердил подписку
-    """
-    if not config.MANDATORY_SUBSCRIPTIONS:
+    if not await is_enabled("mandatory_subscriptions_enabled", default=False):
         return
 
-    # Админы не видят оффер
     if telegram_id in config.ADMIN_IDS:
         return
 
-    # Whitelist — пропуск
     if await is_whitelisted(telegram_id):
         logger.info(f"Subscription offer skipped: {telegram_id} in whitelist")
         return
@@ -45,7 +37,7 @@ async def maybe_offer_subscription(bot, telegram_id: int) -> None:
         if user is None:
             return
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         if user.last_subscription_offer and (now - user.last_subscription_offer) < timedelta(days=OFFER_COOLDOWN_DAYS):
             return
@@ -104,6 +96,10 @@ async def cb_sub_check(callback: CallbackQuery):
     await callback.answer()
     campaign_id = int(callback.data.replace("sub_check_", ""))
 
+    if not await is_enabled("mandatory_subscriptions_enabled", default=False):
+        await callback.message.answer("Функция временно отключена.")
+        return
+
     async with async_session() as session:
         campaign = (await session.execute(
             select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
@@ -117,7 +113,7 @@ async def cb_sub_check(callback: CallbackQuery):
         return
 
     if not campaign.channel_id:
-        await callback.message.answer("⚠️ Кампания настроена некорректно (нет channel_id).")
+        await callback.message.answer("⚠️ Кампания настроена некорректно.")
         return
 
     ok = await is_subscribed(callback.bot, callback.from_user.id, campaign.channel_id)
@@ -137,18 +133,20 @@ async def cb_sub_check(callback: CallbackQuery):
             await callback.message.answer("✅ Подписка уже подтверждена ранее.")
             return
 
+        now = datetime.now(timezone.utc)
+
         if existing:
             existing.status = "confirmed"
-            existing.checked_at = datetime.utcnow()
-            existing.confirmed_at = datetime.utcnow()
+            existing.checked_at = now
+            existing.confirmed_at = now
         else:
             session.add(SubscriptionEvent(
                 campaign_id=campaign.id,
                 user_id=user.id,
                 channel_id=campaign.channel_id,
                 status="confirmed",
-                checked_at=datetime.utcnow(),
-                confirmed_at=datetime.utcnow(),
+                checked_at=now,
+                confirmed_at=now,
             ))
 
         cmp_row = (await session.execute(

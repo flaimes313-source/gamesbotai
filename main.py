@@ -26,6 +26,12 @@ try:
     from database.seed_achievements import seed_achievements
     from database.seed_tests import seed_tests
 
+    _log_boot("Importing feature flags...")
+    from services.feature_flags import ensure_flags_exist
+
+    _log_boot("Importing middlewares...")
+    from bot.middlewares.feature_flags import BotEnabledMiddleware
+
     _log_boot("Importing handlers...")
     from bot.handlers import register_handlers
 
@@ -92,6 +98,9 @@ async def main() -> None:
     logger.info("Calling init_db()...")
     await init_db()
 
+    logger.info("Seeding feature flags...")
+    await ensure_flags_exist()
+
     logger.info("Seeding tests...")
     await seed_tests()
 
@@ -115,6 +124,9 @@ async def main() -> None:
 
     logger.info("Creating Dispatcher...")
     dp = Dispatcher()
+
+    logger.info("Registering middlewares...")
+    dp.update.middleware(BotEnabledMiddleware())
 
     logger.info("Registering handlers...")
     register_handlers(dp)

@@ -6,15 +6,13 @@ from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import Profile, User
+from services.feature_flags import is_enabled
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Хелперы
-# ============================================================
 async def _latest_profile(session, user_id: int) -> Optional[Profile]:
     return (
         await session.execute(
@@ -65,13 +63,10 @@ def _format_comparison(my_p: Profile, fr_p: Profile, friend_name: str = "Дру�
 
 
 async def _find_friend_for_comparison(session, me: User) -> Optional[User]:
-    """Ищем друга по реферальной связи."""
     if me.referrer_id:
-        friend = (
-            await session.execute(
-                select(User).where(User.id == me.referrer_id)
-            )
-        ).scalar_one_or_none()
+        friend = (await session.execute(
+            select(User).where(User.id == me.referrer_id)
+        )).scalar_one_or_none()
         if friend:
             return friend
 
@@ -86,13 +81,18 @@ async def _find_friend_for_comparison(session, me: User) -> Optional[User]:
 
 
 async def _send_comparison(message_or_callback, telegram_id: int) -> None:
-    """Сравнивает пользователя с другом по реферальной связи."""
+    if not await is_enabled("friend_comparison_enabled", default=True):
+        text = "👥 Сравнение временно отключено."
+        if isinstance(message_or_callback, CallbackQuery):
+            await message_or_callback.message.answer(text)
+        else:
+            await message_or_callback.answer(text)
+        return
+
     async with async_session() as session:
-        me = (
-            await session.execute(
-                select(User).where(User.telegram_id == telegram_id)
-            )
-        ).scalar_one_or_none()
+        me = (await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )).scalar_one_or_none()
 
         if me is None:
             text = "Сначала отправь фото — создай свой профиль!"
@@ -128,29 +128,24 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
         await message_or_callback.answer(text)
 
 
-# ============================================================
-# REPLY-КНОПКА «👥 Сравнить»
-# ============================================================
 @router.message(F.text == "👥 Сравнить")
 async def compare_from_menu(message: Message):
     await _send_comparison(message, message.from_user.id)
 
 
-# ============================================================
-# CALLBACK из профиля
-# ============================================================
 @router.callback_query(F.data == "compare_menu")
 async def compare_from_callback(callback: CallbackQuery):
     await callback.answer()
     await _send_comparison(callback, callback.from_user.id)
 
 
-# ============================================================
-# CALLBACK: Сравнить с конкретным игроком (из поиска)
-# ============================================================
 @router.callback_query(F.data.startswith("compare_with_"))
 async def cb_compare_with(callback: CallbackQuery):
     await callback.answer("Сравниваю...")
+
+    if not await is_enabled("friend_comparison_enabled", default=True):
+        await callback.message.answer("👥 Сравнение временно отключено.")
+        return
 
     target_id_str = callback.data.replace("compare_with_", "")
     try:
@@ -160,21 +155,17 @@ async def cb_compare_with(callback: CallbackQuery):
         return
 
     async with async_session() as session:
-        me = (
-            await session.execute(
-                select(User).where(User.telegram_id == callback.from_user.id)
-            )
-        ).scalar_one_or_none()
+        me = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
 
         if me is None:
             await callback.message.answer("Сначала отправь фото!")
             return
 
-        target = (
-            await session.execute(
-                select(User).where(User.id == target_user_id)
-            )
-        ).scalar_one_or_none()
+        target = (await session.execute(
+            select(User).where(User.id == target_user_id)
+        )).scalar_one_or_none()
 
         if target is None:
             await callback.message.answer("Игрок не найден.")

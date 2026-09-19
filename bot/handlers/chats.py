@@ -27,6 +27,7 @@ from services.chats import (
     mark_chat_read,
     send_chat_message,
 )
+from services.feature_flags import is_enabled
 from services.timezones import humanize_datetime
 from utils.logging import get_logger
 
@@ -225,6 +226,11 @@ async def cb_chat_ai_reply(callback: CallbackQuery):
     await callback.answer("Генерирую варианты...")
     chat_id = int(callback.data.replace("chat_ai_reply_", ""))
 
+    # Проверка флага AI-помощника
+    if not await is_enabled("ai_message_helper_enabled", default=True):
+        await callback.message.answer("🤖 AI-помощник временно отключён.")
+        return
+
     if not await has_full_access(callback.from_user.id):
         await callback.message.answer("💎 Функция доступна только с PRO.")
         return
@@ -363,6 +369,10 @@ async def cb_chat_ai_analyze(callback: CallbackQuery):
     await callback.answer("Анализирую...")
     chat_id = int(callback.data.replace("chat_ai_analyze_", ""))
 
+    if not await is_enabled("ai_message_helper_enabled", default=True):
+        await callback.message.answer("📊 AI-анализ временно отключён.")
+        return
+
     if not await has_full_access(callback.from_user.id):
         await callback.message.answer("💎 Функция доступна только с PRO.")
         return
@@ -443,6 +453,11 @@ async def cb_chat_ai_analyze(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("chat_ai_locked_"))
 async def cb_chat_ai_locked(callback: CallbackQuery):
     await callback.answer()
+
+    if not await is_enabled("ai_message_helper_enabled", default=True):
+        await callback.message.answer("🤖 AI-помощник временно отключён.")
+        return
+
     await callback.message.answer(
         "💎 <b>AI-помощник доступен только с PRO</b>\n\n"
         "С PRO ты можешь:\n"
@@ -453,7 +468,7 @@ async def cb_chat_ai_locked(callback: CallbackQuery):
 
 
 # ============================================================
-# Жалоба на пользователя
+# Жалоба
 # ============================================================
 @router.callback_query(F.data.startswith("chat_report_"))
 async def cb_chat_report(callback: CallbackQuery):

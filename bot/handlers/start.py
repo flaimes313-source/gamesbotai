@@ -10,15 +10,13 @@ from config import config
 from database.connection import async_session
 from database.models import User
 from services.analytics.tracker import track
+from services.feature_flags import is_enabled
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Автодетект таймзоны по языку Telegram
-# ============================================================
 def _guess_timezone(language_code: str | None) -> str:
     mapping = {
         "ru": "Europe/Moscow",
@@ -37,9 +35,6 @@ def _guess_timezone(language_code: str | None) -> str:
     return mapping.get((language_code or "").lower(), "Europe/Moscow")
 
 
-# ============================================================
-# Получить или создать пользователя
-# ============================================================
 async def get_or_create_user(
     telegram_id: int,
     username: str | None,
@@ -88,9 +83,6 @@ async def get_or_create_user(
         return user
 
 
-# ============================================================
-# /start
-# ============================================================
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     payload = None
@@ -100,7 +92,11 @@ async def cmd_start(message: Message):
             payload = args[1].strip()
 
     referrer_id = None
-    if payload and payload.startswith("ref_") and config.REFERRALS_ENABLED:
+
+    # Проверка флага рефералов из БД
+    referrals_on = await is_enabled("referrals_enabled", default=True)
+
+    if payload and payload.startswith("ref_") and referrals_on:
         try:
             referrer_id = int(payload.replace("ref_", ""))
             await track(
@@ -131,34 +127,23 @@ async def cmd_start(message: Message):
     await message.answer(text, reply_markup=main_menu_kb())
 
 
-# ============================================================
-# /help
-# ============================================================
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
         "📖 <b>Что умеет бот</b>\n\n"
-        "1️⃣ <b>Отправь фото</b> — получишь игровой AI-профиль с архетипом, "
-        "характеристиками и карточкой.\n\n"
-        "2️⃣ <b>Поделись результатом</b> — нажми «📤 Поделиться» или кнопку "
-        "под карточкой. Друзья, пришедшие по твоей ссылке, смогут "
-        "сравниться с тобой.\n\n"
-        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков»: 7 режимов поиска.\n\n"
-        "4️⃣ <b>Пройди тесты</b> — «🧪 Пройти тест»: 10 развлекательных тестов.\n\n"
+        "1️⃣ <b>Отправь фото</b> — получишь игровой AI-профиль.\n\n"
+        "2️⃣ <b>Поделись результатом</b> — «📤 Поделиться».\n\n"
+        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков»: 7 режимов.\n\n"
+        "4️⃣ <b>Пройди тесты</b> — «🧪 Пройти тест».\n\n"
         "5️⃣ <b>Сравни с другом</b> — «👥 Сравнить».\n\n"
         "6️⃣ <b>Собери достижения</b> — «🏆 Достижения».\n\n"
-        "7️⃣ <b>PRO подписка</b> — «💎 PRO»: безлимит AI, без рекламы, "
-        "AI-помощник в чатах.\n\n"
-        "🌍 <b>Часовой пояс</b> — настрой, чтобы уведомления приходили "
-        "в удобное время.\n\n"
+        "7️⃣ <b>PRO подписка</b> — «💎 PRO».\n\n"
+        "🌍 <b>Часовой пояс</b> — настрой для удобных уведомлений.\n\n"
         "🆘 <b>Поддержка</b> — если что-то не работает."
     )
     await message.answer(text)
 
 
-# ============================================================
-# Кнопка «📸 Новый анализ»
-# ============================================================
 @router.message(F.text == "📸 Новый анализ")
 async def new_analysis_hint(message: Message):
     await message.answer(
@@ -170,9 +155,6 @@ async def new_analysis_hint(message: Message):
     )
 
 
-# ============================================================
-# CALLBACK
-# ============================================================
 @router.callback_query(F.data == "send_photo")
 async def cb_send_photo(callback: CallbackQuery):
     await callback.answer()

@@ -9,6 +9,7 @@ from database.connection import async_session
 from database.models import Event, Profile, User
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
+from services.feature_flags import is_enabled
 from services.timezones import get_local_hour
 from utils.logging import get_logger
 
@@ -81,7 +82,12 @@ async def send_daily_for_current_hour(bot: Bot) -> None:
     """
     Отправляет daily тем юзерам, у которых сейчас DAILY_TARGET_HOUR локально
     и кому ещё не отправляли сегодня.
+
+    Проверяет флаг daily_content_enabled в БД.
     """
+    if not await is_enabled("daily_content_enabled", default=False):
+        return
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
     async with async_session() as session:
@@ -93,11 +99,9 @@ async def send_daily_for_current_hour(bot: Bot) -> None:
 
     sent = 0
     for user in users:
-        # Смотрим локальный час
         if get_local_hour(user.timezone) != DAILY_TARGET_HOUR:
             continue
 
-        # Не отправляем второй раз сегодня (по UTC-дню)
         today_start = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
         )

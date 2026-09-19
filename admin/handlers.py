@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -17,7 +17,6 @@ from config import config
 from database.connection import async_session
 from database.models import (
     AdvertisingCampaign,
-    FeatureFlag,
     Payment,
     Promocode,
     SubscriptionCampaign,
@@ -28,6 +27,8 @@ from database.models import (
 from services.advertising.reports import ads_report, format_ads_report
 from services.analytics.funnel import format_funnel, get_funnel
 from services.experiments_report import ab_photo_prompt_report, format_ab_report
+from services.feature_flags import DEFAULTS as DEFAULT_FLAGS
+from services.feature_flags import get_all_flags, is_enabled, set_flag
 from services.metrics import chats_stats, full_stats
 from services.whitelist import add_to_whitelist, remove_from_whitelist
 from utils.logging import get_logger
@@ -334,7 +335,7 @@ async def cb_ads_stop_all(callback: CallbackQuery):
         )).scalars().all()
         for c in rows:
             c.status = "stopped"
-            c.ended_at = datetime.utcnow()
+            c.ended_at = datetime.now(timezone.utc)
         await session.commit()
 
     await callback.message.answer(f"🚨 Остановлено кампаний: {len(rows)}")
@@ -354,7 +355,7 @@ async def cb_ads_report(callback: CallbackQuery):
 
 
 # ============================================================
-# ОБЯЗАТЕЛЬНЫЕ ПОДПИСКИ
+# ПОДПИСКИ
 # ============================================================
 @router.callback_query(F.data == "adm_subs")
 async def cb_subs(callback: CallbackQuery):
@@ -416,7 +417,7 @@ async def cb_subs_stop_all(callback: CallbackQuery):
         for c in rows:
             c.is_active = False
             c.status = "stopped"
-            c.ended_at = datetime.utcnow()
+            c.ended_at = datetime.now(timezone.utc)
         await session.commit()
 
     await callback.message.answer(f"🚨 Остановлено кампаний: {len(rows)}")
@@ -472,39 +473,19 @@ async def cb_promos_new(callback: CallbackQuery):
 # ============================================================
 # FEATURE FLAGS
 # ============================================================
-DEFAULT_FLAGS = {
-    "bot_enabled": True,
-    "ai_enabled": True,
-    "matching_enabled": True,
-    "referrals_enabled": True,
-    "mandatory_subscriptions_enabled": False,
-    "advertising_enabled": False,
-    "premium_enabled": False,
-    "daily_content_enabled": False,
-    "friend_comparison_enabled": True,
-    "player_search_enabled": True,
-    "ai_message_helper_enabled": True,
-}
-
-
-async def _load_flags() -> dict[str, bool]:
-    async with async_session() as session:
-        rows = (await session.execute(select(FeatureFlag))).scalars().all()
-
-    flags = dict(DEFAULT_FLAGS)
-    for r in rows:
-        flags[r.key] = r.enabled
-    return flags
-
-
 @router.callback_query(F.data == "adm_flags")
 async def cb_flags(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
 
-    flags = await _load_flags()
-    await callback.message.answer("⚙️ <b>Feature flags</b>", reply_markup=flags_menu_kb(flags))
+    flags = await get_all_flags()
+    await callback.message.answer(
+        "⚙️ <b>Feature flags</b>\n\n"
+        "Нажми на любой флаг, чтобы переключить. "
+        "Изменения применяются сразу, без перезапуска бота.",
+        reply_markup=flags_menu_kb(flags),
+    )
 
 
 @router.callback_query(F.data.startswith("flag_toggle_"))
@@ -515,19 +496,10 @@ async def cb_flag_toggle(callback: CallbackQuery):
 
     key = callback.data.replace("flag_toggle_", "")
 
-    async with async_session() as session:
-        row = (await session.execute(
-            select(FeatureFlag).where(FeatureFlag.key == key)
-        )).scalar_one_or_none()
+    current = await is_enabled(key, default=DEFAULT_FLAGS.get(key, False))
+    await set_flag(key, not current)
 
-        if row is None:
-            row = FeatureFlag(key=key, enabled=not DEFAULT_FLAGS.get(key, False))
-            session.add(row)
-        else:
-            row.enabled = not row.enabled
-        await session.commit()
-
-    flags = await _load_flags()
+    flags = await get_all_flags()
     try:
         await callback.message.edit_reply_markup(reply_markup=flags_menu_kb(flags))
     except TelegramBadRequest:
@@ -618,7 +590,7 @@ async def cmd_reply(message: Message):
 
         ticket.admin_reply = reply_text
         ticket.status = "closed"
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = datetime.now(timezone.utc)
 
         user = (await session.execute(
             select(User).where(User.id == ticket.user_id)
@@ -693,7 +665,7 @@ async def admin_input(message: Message):
                 price_per_subscription=2.0,
                 subscriber_limit=1000,
                 budget=2000,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             session.add(c)
             await session.commit()

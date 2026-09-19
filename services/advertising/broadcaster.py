@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -7,6 +7,7 @@ from config import config
 from database.connection import async_session
 from database.models import AdvertisingCampaign, User, UserAdEvent
 from services.analytics.tracker import track
+from services.feature_flags import is_enabled
 from services.whitelist import is_whitelisted
 from utils.logging import get_logger
 
@@ -29,14 +30,12 @@ def _ad_kb(campaign: AdvertisingCampaign) -> InlineKeyboardMarkup | None:
 
 
 async def maybe_send_ad(bot, telegram_id: int) -> bool:
-    if not config.ADVERTISING_ENABLED:
+    if not await is_enabled("advertising_enabled", default=False):
         return False
 
-    # Админы — без рекламы
     if telegram_id in config.ADMIN_IDS:
         return False
 
-    # Whitelist — без рекламы
     if await is_whitelisted(telegram_id):
         return False
 
@@ -47,9 +46,8 @@ async def maybe_send_ad(bot, telegram_id: int) -> bool:
         if user is None:
             return False
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
-        # PRO — без рекламы
         if user.premium_until and user.premium_until > now:
             return False
 
@@ -105,6 +103,6 @@ async def stop_campaign(campaign_id: int) -> None:
         )).scalar_one_or_none()
         if campaign:
             campaign.status = "stopped"
-            campaign.ended_at = datetime.utcnow()
+            campaign.ended_at = datetime.now(timezone.utc)
             await session.commit()
             logger.info(f"Campaign {campaign_id} stopped")

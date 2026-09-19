@@ -1,27 +1,24 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from bot.keyboards.main import pro_menu_kb
-from config import config
 from database.connection import async_session
 from database.models import Payment as PaymentModel, Promocode, User
 from services.achievements import unlock_achievement
 from services.analytics.tracker import track
+from services.feature_flags import is_enabled
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# МЕНЮ PRO
-# ============================================================
 @router.message(F.text == "💎 PRO")
 async def pro_menu(message: Message):
-    if not config.PREMIUM_ENABLED:
+    if not await is_enabled("premium_enabled", default=False):
         await message.answer(
             "💎 <b>PRO подписка</b>\n\n"
             "Сейчас подписка временно недоступна.\n"
@@ -34,7 +31,7 @@ async def pro_menu(message: Message):
         "Что даёт PRO:\n"
         "• ♾ Безлимит AI-анализов (вместо 5 в день)\n"
         "• 🚀 Расширенные режимы поиска игроков\n"
-        "• 💬 Все 3 варианта сообщений от AI\n"
+        "• 🤖 AI-помощник в чатах\n"
         "• 🚫 Без рекламы\n\n"
         "Стоимость: <b>299 ₽ / 30 дней</b>",
         reply_markup=pro_menu_kb(),
@@ -44,10 +41,9 @@ async def pro_menu(message: Message):
 @router.callback_query(F.data == "pro_menu")
 async def cb_pro_menu(callback: CallbackQuery):
     await callback.answer()
-    if not config.PREMIUM_ENABLED:
+    if not await is_enabled("premium_enabled", default=False):
         await callback.message.answer(
-            "💎 <b>PRO подписка</b>\n\n"
-            "Сейчас подписка временно недоступна."
+            "💎 <b>PRO подписка</b>\n\nСейчас подписка временно недоступна."
         )
         return
     await callback.message.answer(
@@ -55,25 +51,23 @@ async def cb_pro_menu(callback: CallbackQuery):
         "Что даёт PRO:\n"
         "• ♾ Безлимит AI-анализов\n"
         "• 🚀 Расширенные режимы поиска\n"
-        "• 💬 Все 3 варианта сообщений от AI\n"
+        "• 🤖 AI-помощник в чатах\n"
         "• 🚫 Без рекламы\n\n"
         "Стоимость: <b>299 ₽ / 30 дней</b>",
         reply_markup=pro_menu_kb(),
     )
 
 
-# ============================================================
-# ПОКУПКА PRO
-# ============================================================
 @router.callback_query(F.data == "buy_pro")
 async def cb_buy_pro(callback: CallbackQuery):
     await callback.answer()
 
-    if not config.PREMIUM_ENABLED:
+    if not await is_enabled("premium_enabled", default=False):
         await callback.message.answer("PRO отключён.")
         return
 
-    # Проверяем, настроена ли YooKassa
+    from config import config
+
     if not config.YOOKASSA_SHOP_ID or not config.YOOKASSA_SECRET:
         await callback.message.answer(
             "💳 <b>Оплата временно недоступна</b>\n\n"
@@ -119,9 +113,6 @@ async def cb_buy_pro(callback: CallbackQuery):
     )
 
 
-# ============================================================
-# ПРОМОКОДЫ
-# ============================================================
 @router.callback_query(F.data == "enter_promo")
 async def cb_enter_promo(callback: CallbackQuery):
     await callback.answer()
@@ -140,13 +131,13 @@ async def handle_promo(message: Message):
         )).scalar_one_or_none()
 
         if not promo or not promo.is_active:
-            return  # молча игнорируем — это не наш промокод
+            return
 
         if promo.max_uses and promo.used_count >= promo.max_uses:
             await message.answer("❌ Промокод исчерпан.")
             return
 
-        if promo.expires_at and promo.expires_at < datetime.utcnow():
+        if promo.expires_at and promo.expires_at < datetime.now(timezone.utc):
             await message.answer("❌ Промокод истёк.")
             return
 
@@ -159,7 +150,7 @@ async def handle_promo(message: Message):
             return
 
         days = promo.value if promo.type == "pro_days" else 30
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         base = user.premium_until if (user.premium_until and user.premium_until > now) else now
         user.premium_until = base + timedelta(days=days)
         promo.used_count += 1
@@ -169,19 +160,10 @@ async def handle_promo(message: Message):
         premium_until = user.premium_until
 
     await unlock_achievement(user_id_for_ach, "pro_first")
-    await track(
-        "pro_purchase",
-        telegram_id=message.from_user.id,
-        payload={"type": "promo", "code": code},
-    )
+    await track("pro_purchase", telegram_id=message.from_user.id, payload={"type": "promo", "code": code})
 
     await message.answer(
         f"✅ <b>PRO активирован!</b>\n\n"
         f"Активирован на <b>{days} дней</b>.\n"
-        f"Действует до: <b>{premium_until.strftime('%d.%m.%Y')}</b>\n\n"
-        f"Теперь у тебя:\n"
-        f"• ♾ Безлимит AI-анализов\n"
-        f"• 🚀 Расширенные режимы поиска\n"
-        f"• 💬 Все 3 варианта сообщений\n"
-        f"• 🚫 Без рекламы"
+        f"Действует до: <b>{premium_until.strftime('%d.%m.%Y')}</b>"
     )
