@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# Список допустимых событий.
+# Белый список всех событий проекта.
 # Неизвестные имена логируются как WARNING, но всё равно пишутся.
 # ============================================================
 EVENT_NAMES = {
@@ -44,6 +44,7 @@ EVENT_NAMES = {
     "pro_purchase",
     "subscription_offer_shown",
     "subscription_confirmed",
+    "subscription_gate_shown",
     "ad_shown",
     "ad_clicked",
 
