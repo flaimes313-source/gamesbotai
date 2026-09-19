@@ -15,10 +15,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Час отправки по локальному времени юзера
 DAILY_TARGET_HOUR = 20
-
-# Интервал проверки — каждые 15 минут
 CHECK_INTERVAL_SECONDS = 15 * 60
 
 
@@ -50,7 +47,8 @@ async def _send_one(bot: Bot, telegram_id: int) -> bool:
     }
 
     try:
-        result = await get_ai_provider().generate_daily_result(profile_dict)
+        provider = await get_ai_provider()
+        result = await provider.generate_daily_result(profile_dict)
     except Exception:
         logger.exception("Daily AI failed")
         return False
@@ -79,12 +77,6 @@ async def _send_one(bot: Bot, telegram_id: int) -> bool:
 
 
 async def send_daily_for_current_hour(bot: Bot) -> None:
-    """
-    Отправляет daily тем юзерам, у которых сейчас DAILY_TARGET_HOUR локально
-    и кому ещё не отправляли сегодня.
-
-    Проверяет флаг daily_content_enabled в БД.
-    """
     if not await is_enabled("daily_content_enabled", default=False):
         return
 
@@ -129,9 +121,6 @@ async def send_daily_for_current_hour(bot: Bot) -> None:
 
 
 async def daily_loop(bot: Bot) -> None:
-    """
-    Фоновый цикл: каждые 15 минут проверяет, у кого 20:00 локально.
-    """
     while True:
         try:
             await send_daily_for_current_hour(bot)

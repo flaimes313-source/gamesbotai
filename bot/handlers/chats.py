@@ -42,9 +42,6 @@ def _is_waiting_chat_reply(message: Message) -> bool:
     return PENDING_CHAT_REPLY.get(message.from_user.id) is not None
 
 
-# ============================================================
-# Reply-кнопка «💬 Мои чаты»
-# ============================================================
 @router.message(F.text == "💬 Мои чаты")
 async def show_chats_from_menu(message: Message):
     await _send_chat_list(message, message.from_user.id)
@@ -56,9 +53,6 @@ async def cb_chat_list(callback: CallbackQuery):
     await _send_chat_list(callback, callback.from_user.id)
 
 
-# ============================================================
-# Список чатов
-# ============================================================
 async def _send_chat_list(message_or_callback, telegram_id: int) -> None:
     await track("chats_list_viewed", telegram_id=telegram_id)
 
@@ -115,9 +109,6 @@ async def _send_chat_list(message_or_callback, telegram_id: int) -> None:
     await _reply(message_or_callback, text, kb)
 
 
-# ============================================================
-# Открытие чата
-# ============================================================
 @router.callback_query(F.data.startswith("chat_open_"))
 async def cb_chat_open(callback: CallbackQuery):
     await callback.answer()
@@ -183,9 +174,6 @@ async def _open_chat(message_or_callback, telegram_id: int, chat_id: int) -> Non
     await _reply(message_or_callback, text, kb)
 
 
-# ============================================================
-# Ответ
-# ============================================================
 @router.callback_query(F.data.startswith("chat_reply_"))
 async def cb_chat_reply(callback: CallbackQuery):
     await callback.answer()
@@ -218,15 +206,11 @@ async def cb_chat_reply(callback: CallbackQuery):
     )
 
 
-# ============================================================
-# AI: Помоги ответить
-# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_reply_"))
 async def cb_chat_ai_reply(callback: CallbackQuery):
     await callback.answer("Генерирую варианты...")
     chat_id = int(callback.data.replace("chat_ai_reply_", ""))
 
-    # Проверка флага AI-помощника
     if not await is_enabled("ai_message_helper_enabled", default=True):
         await callback.message.answer("🤖 AI-помощник временно отключён.")
         return
@@ -276,7 +260,8 @@ async def cb_chat_ai_reply(callback: CallbackQuery):
     await callback.message.answer("🤖 Думаю над ответом...")
 
     try:
-        result = await get_ai_provider().generate_chat_reply_suggestions(
+        provider = await get_ai_provider()
+        result = await provider.generate_chat_reply_suggestions(
             history=history,
             my_name=my_name,
             other_name=other_name,
@@ -361,9 +346,6 @@ async def cb_chat_ai_send(callback: CallbackQuery):
         await callback.message.answer("❌ Не удалось отправить.")
 
 
-# ============================================================
-# AI: Анализ переписки
-# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_analyze_"))
 async def cb_chat_ai_analyze(callback: CallbackQuery):
     await callback.answer("Анализирую...")
@@ -418,7 +400,8 @@ async def cb_chat_ai_analyze(callback: CallbackQuery):
     await callback.message.answer("📊 Анализирую переписку...")
 
     try:
-        result = await get_ai_provider().analyze_chat(
+        provider = await get_ai_provider()
+        result = await provider.analyze_chat(
             history=history,
             my_name=my_name,
             other_name=other_name,
@@ -447,9 +430,6 @@ async def cb_chat_ai_analyze(callback: CallbackQuery):
     )
 
 
-# ============================================================
-# AI: Заглушка для не-PRO
-# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_locked_"))
 async def cb_chat_ai_locked(callback: CallbackQuery):
     await callback.answer()
@@ -467,9 +447,6 @@ async def cb_chat_ai_locked(callback: CallbackQuery):
     )
 
 
-# ============================================================
-# Жалоба
-# ============================================================
 @router.callback_query(F.data.startswith("chat_report_"))
 async def cb_chat_report(callback: CallbackQuery):
     await callback.answer()
@@ -537,9 +514,6 @@ async def cb_chat_report(callback: CallbackQuery):
             pass
 
 
-# ============================================================
-# /cancel
-# ============================================================
 @router.message(F.text == "/cancel")
 async def cmd_cancel(message: Message):
     if PENDING_CHAT_REPLY.pop(message.from_user.id, None) is not None:
@@ -548,9 +522,6 @@ async def cmd_cancel(message: Message):
         await message.answer("Нечего отменять.")
 
 
-# ============================================================
-# Catch-all
-# ============================================================
 @router.message(F.text & ~F.text.startswith("/"), _is_waiting_chat_reply)
 async def handle_chat_reply(message: Message):
     chat_id = PENDING_CHAT_REPLY.pop(message.from_user.id, None)

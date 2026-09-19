@@ -7,6 +7,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import User
@@ -14,20 +15,16 @@ from services.access import has_full_access
 from services.ai.factory import get_ai_provider
 from services.analytics.tracker import track
 from services.chats import get_or_create_chat, send_chat_message
+from services.feature_flags import is_enabled
 from services.jokes import categories, random_joke
 from utils.logging import get_logger
-from sqlalchemy import select
 
 router = Router()
 logger = get_logger(__name__)
 
-# Пользователь, ожидающий отправки «прикола»: telegram_id → chat_id
-PENDING_JOKE: Dict[int, int] = {}
+_SUGGESTIONS: Dict[str, dict] = {}
 
 
-# ============================================================
-# Клавиатуры
-# ============================================================
 def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -44,10 +41,7 @@ def message_styles_kb(target_user_id: int) -> InlineKeyboardMarkup:
 def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
     try:
         cats = categories()
-        cats = [
-            c for c in cats
-            if c.lower() not in ("случайный", "random")
-        ]
+        cats = [c for c in cats if c.lower() not in ("случайный", "random")]
     except Exception:
         logger.exception("Failed to load joke categories")
         cats = []
@@ -91,7 +85,6 @@ async def cb_msg(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("style_custom_"))
 async def cb_style_custom(callback: CallbackQuery):
-    """Пользователь жмёт «Написать своё» — создаём чат и запускаем ввод."""
     await callback.answer()
     target_id = int(callback.data.replace("style_custom_", ""))
 
@@ -102,10 +95,8 @@ async def cb_style_custom(callback: CallbackQuery):
         if me is None:
             await callback.message.answer("Сначала отправь фото!")
             return
-
         chat = await get_or_create_chat(session, me.id, target_id)
 
-    # Ставим в режим чата — обработчик в chats.py подхватит ввод
     from bot.handlers.chats import PENDING_CHAT_REPLY
     PENDING_CHAT_REPLY[callback.from_user.id] = chat.id
 
@@ -140,7 +131,9 @@ async def cb_style(callback: CallbackQuery):
         from services.matching.matcher import get_my_profile
         async with async_session() as session:
             my_p = await get_my_profile(session, me.id)
-        result = await get_ai_provider().generate_message_suggestions(
+
+        provider = await get_ai_provider()
+        result = await provider.generate_message_suggestions(
             my_archetype=my_p.archetype if my_p else "Игрок",
             their_archetype="Игрок",
             match_score=80,
@@ -169,9 +162,6 @@ async def cb_style(callback: CallbackQuery):
         ]
     )
 
-    # Сохраняем варианты в памяти chats.py — там их используют
-    from bot.handlers.chats import PENDING_CHAT_REPLY  # noqa
-    # Сохранение вариантов делаем через простой словарь тут
     _SUGGESTIONS[f"sugg_{callback.from_user.id}"] = {
         "target_id": target_id,
         "messages": msgs,
@@ -182,10 +172,6 @@ async def cb_style(callback: CallbackQuery):
         lines.append(f"{i}. {m}")
 
     await callback.message.answer("\n".join(lines) + extra_hint, reply_markup=kb)
-
-
-# Хранилище вариантов сообщений: ключ → {target_id, messages}
-_SUGGESTIONS: Dict[str, dict] = {}
 
 
 @router.callback_query(F.data.startswith("send_sugg_"))
@@ -232,7 +218,7 @@ async def cb_send_sugg(callback: CallbackQuery):
             ),
         )
     else:
-        await callback.message.answer("❌ Не удалось доставить. Возможно, получатель отключил сообщения.")
+        await callback.message.answer("❌ Не удалось доставить.")
 
 
 # ============================================================
@@ -261,6 +247,7 @@ async def cb_joke(callback: CallbackQuery):
     if target is None:
         await callback.message.answer("Игрок не найден.")
         return
+
     if not target.allow_messages:
         await callback.message.answer("🚫 Этот игрок отключил сообщения.")
         return
@@ -336,4 +323,4 @@ async def cb_jokecat(callback: CallbackQuery):
             ),
         )
     else:
-        await callback.message.answer("❌ Не удалось доставить. Возможно, получатель отключил сообщения.")
+        await callback.message.answer("❌ Не удалось доставить.")

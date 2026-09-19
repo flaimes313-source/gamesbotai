@@ -29,7 +29,6 @@ router = Router()
 logger = get_logger(__name__)
 
 SEARCH_STATE: Dict[int, dict] = {}
-
 PREMIUM_MODES = {"intellectual", "chaos"}
 
 
@@ -121,7 +120,9 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
                 "chaos": my_p.chaos if my_p else 0,
                 "intellect": my_p.intellect if my_p else 0,
             }
-        ai = await get_ai_provider().generate_match_description(
+
+        provider = await get_ai_provider()
+        ai = await provider.generate_match_description(
             my_dict, c["profile"], c["score"]
         )
         description_line = (

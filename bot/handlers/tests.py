@@ -18,7 +18,6 @@ TOTAL_QUESTIONS = 5
 
 
 async def _tests_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
-    """Меню тестов: PRO видит все, обычные — только бесплатные + PRO-заглушки."""
     full = await has_full_access(telegram_id)
 
     async with async_session() as session:
@@ -29,7 +28,6 @@ async def _tests_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
     rows = []
     for t in tests:
         if t.is_premium and not full:
-            # Показываем как PRO, но помечаем
             rows.append([InlineKeyboardButton(
                 text=f"💎 {t.name}",
                 callback_data=f"test_locked_{t.id}",
@@ -58,8 +56,7 @@ async def cb_test_locked(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer(
         "💎 <b>Этот тест доступен только с PRO</b>\n\n"
-        "С PRO ты получаешь доступ ко всем тестам, "
-        "включая расширенные и специальные.\n\n"
+        "С PRO ты получаешь доступ ко всем тестам.\n\n"
         "Оформить: /start → 💎 PRO"
     )
 
@@ -97,7 +94,6 @@ async def cb_test_start(callback: CallbackQuery):
         await callback.message.answer("Тест не найден.")
         return
 
-    # Двойная проверка: PRO-тест и нет доступа
     if test.is_premium and not await has_full_access(callback.from_user.id):
         await callback.message.answer("💎 Этот тест доступен только с PRO.")
         return
@@ -105,7 +101,8 @@ async def cb_test_start(callback: CallbackQuery):
     await callback.message.answer(f"🧪 Загружаю тест «{test.name}»...")
 
     try:
-        question = await get_ai_provider().generate_test_question(test.name, test.description or "")
+        provider = await get_ai_provider()
+        question = await provider.generate_test_question(test.name, test.description or "")
     except Exception:
         logger.exception("Test question generation failed")
         await callback.message.answer("😔 AI сейчас недоступен. Попробуй позже.")
@@ -143,7 +140,8 @@ async def cb_test_answer(callback: CallbackQuery):
 
     if state["question_index"] < TOTAL_QUESTIONS:
         try:
-            q = await get_ai_provider().generate_test_question(state["test_name"], "")
+            provider = await get_ai_provider()
+            q = await provider.generate_test_question(state["test_name"], "")
             state["questions"].append(q)
         except Exception:
             logger.exception("Next question failed")
@@ -157,7 +155,8 @@ async def _finalize_test(callback: CallbackQuery, state: dict):
     await callback.message.answer("🔎 Считаю результат...")
 
     try:
-        result = await get_ai_provider().generate_test_result(state["test_name"], state["answers"])
+        provider = await get_ai_provider()
+        result = await provider.generate_test_result(state["test_name"], state["answers"])
     except Exception:
         logger.exception("Test result failed")
         result = {"title": "ТЕСТ ПРОЙДЕН", "text": "Результат недоступен.", "emoji": "🧪"}
