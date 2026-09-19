@@ -129,8 +129,12 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     logger.info("Registering middlewares...")
+    # Глобальный выключатель — на все апдейты
     dp.update.middleware(BotEnabledMiddleware())
-    dp.update.middleware(MandatorySubscriptionMiddleware())
+
+    # Гейт подписок — на message и callback_query
+    dp.message.middleware(MandatorySubscriptionMiddleware())
+    dp.callback_query.middleware(MandatorySubscriptionMiddleware())
 
     logger.info("Registering handlers...")
     register_handlers(dp)
