@@ -24,28 +24,27 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Что НЕ блокируем — эти команды и кнопки всегда проходят
 PASS_THROUGH_COMMANDS = ("/start", "/help", "/cancel")
 PASS_THROUGH_CALLBACKS = ("sub_check_",)
 
 
-def _get_first_word(text: str) -> str:
-    text = (text or "").strip()
-    if not text:
-        return ""
-    return text.split()[0]
+def _build_channel_url(campaign: SubscriptionCampaign) -> str:
+    """Возвращает валидный https://t.me/... URL для кнопки."""
+    url = campaign.channel_link
+    if url and url.startswith("http"):
+        return url
+    if campaign.channel_username:
+        username = campaign.channel_username.lstrip("@")
+        return f"https://t.me/{username}"
+    # Крайний фолбэк
+    return "https://t.me/telegram"
 
 
 def _build_gate_kb(campaign: SubscriptionCampaign) -> InlineKeyboardMarkup:
-    channel_url = campaign.channel_link
-    if not channel_url and campaign.channel_username:
-        channel_url = f"https://t.me/{campaign.channel_username}"
-    if not channel_url:
-        channel_url = "https://t.me/telegram"
-
+    url = _build_channel_url(campaign)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Подписаться", url=channel_url)],
+            [InlineKeyboardButton(text="📢 Подписаться", url=url)],
             [InlineKeyboardButton(
                 text="✅ Я подписался",
                 callback_data=f"sub_check_{campaign.id}",
@@ -55,38 +54,23 @@ def _build_gate_kb(campaign: SubscriptionCampaign) -> InlineKeyboardMarkup:
 
 
 def _build_gate_text(campaign: SubscriptionCampaign) -> str:
-    channel_url = campaign.channel_link
-    if not channel_url and campaign.channel_username:
-        channel_url = f"https://t.me/{campaign.channel_username}"
-    if not channel_url:
-        channel_url = "https://t.me/telegram"
-
+    url = _build_channel_url(campaign)
     return (
         "🔒 <b>Требуется подписка</b>\n\n"
         "Чтобы пользоваться ботом, подпишись на канал:\n"
-        f"👉 {channel_url}\n\n"
+        f"👉 {url}\n\n"
         "После подписки нажми «✅ Я подписался»."
     )
 
 
 class MandatorySubscriptionMiddleware(BaseMiddleware):
-    """
-    Логика:
-
-    1. /start, /help, /cancel, sub_check_* — пропускаем всегда.
-    2. Админ / whitelist / PRO — пропускаем всегда.
-    3. Если есть активная кампания и юзер не подписан —
-       ЛЮБОЕ действие блокируется экраном подписки.
-    4. После подписки (is_subscribed → True) — пропускаем.
-    """
-
     async def __call__(
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        # --- 0. Флаг ---
+        # --- Флаг ---
         try:
             flag_on = await is_enabled("mandatory_subscriptions_enabled", default=False)
         except Exception:
@@ -100,7 +84,7 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
         if from_user is None:
             return await handler(event, data)
 
-        # --- 1. Пропуски ---
+        # --- Пропуски ---
         if from_user.id in config.ADMIN_IDS:
             return await handler(event, data)
 
@@ -116,9 +100,10 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
         except Exception:
             logger.exception("[GATE] premium check failed")
 
-        # --- 2. Pass-through команды ---
+        # --- Pass-through ---
         if isinstance(event, Message):
-            first = _get_first_word(event.text or "")
+            text = (event.text or "").strip()
+            first = text.split()[0] if text else ""
             if first in PASS_THROUGH_COMMANDS:
                 return await handler(event, data)
 
@@ -127,7 +112,9 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
             if any(data_str.startswith(p) for p in PASS_THROUGH_CALLBACKS):
                 return await handler(event, data)
 
-        # --- 3. Активная кампания ---
+        # --- Кампания ---
+        campaign = None
+        user_row = None
         try:
             async with async_session() as session:
                 campaign = (await session.execute(
@@ -146,11 +133,9 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
                 )).scalar_one_or_none()
 
                 if user_row is None:
-                    # Юзера ещё нет в БД — пусть /start создаст
                     logger.info(f"[GATE] user {from_user.id} not in DB — pass through")
                     return await handler(event, data)
 
-                # Уже подтверждено?
                 existing = (await session.execute(
                     select(SubscriptionEvent)
                     .where(SubscriptionEvent.campaign_id == campaign.id)
@@ -165,7 +150,7 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
             logger.exception("[GATE] campaign check failed")
             return await handler(event, data)
 
-        # --- 4. Живая проверка через Telegram ---
+        # --- Живая проверка ---
         bot = data.get("bot")
         ok = False
         if bot is not None:
@@ -176,7 +161,6 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
                 ok = False
 
         if ok:
-            # Сохраняем подтверждение и пропускаем
             try:
                 async with async_session() as session:
                     user_row = (await session.execute(
@@ -207,51 +191,70 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
 
             return await handler(event, data)
 
-        # --- 5. НЕ подписан → показываем экран подписки ---
+        # --- НЕ подписан → показать экран ---
         logger.info(f"[GATE] user={from_user.id} not subscribed — showing gate")
-        await self._send_gate(event, campaign, from_user.id)
+        await self._send_gate(event, campaign, from_user.id, bot)
         return None
 
-    # --------------------------------------------------------
-    # Отправка экрана подписки
-    # --------------------------------------------------------
     async def _send_gate(
         self,
         event: TelegramObject,
         campaign: SubscriptionCampaign,
         user_id: int,
+        bot,
     ) -> None:
         kb = _build_gate_kb(campaign)
         text = _build_gate_text(campaign)
 
         sent = False
+        err: Exception | None = None
 
-        # Callback → show_alert + сообщение
+        # 1. Отвечаем на callback (для всплывающего окна)
         if isinstance(event, CallbackQuery):
             try:
                 await event.answer("❌ Сначала подпишись на канал", show_alert=True)
             except Exception as e:
                 logger.warning(f"[GATE] callback.answer failed: {e}")
 
-            try:
-                await event.message.answer(text, reply_markup=kb)
-                sent = True
-                logger.info(f"[GATE] sent to callback message for {user_id}")
-            except Exception as e:
-                logger.exception(f"[GATE] callback send failed: {e}")
+        # 2. Отправляем через bot.send_message напрямую — самый надёжный способ
+        if bot is not None:
+            # Определяем chat_id
+            chat_id = None
+            if isinstance(event, Message):
+                chat_id = event.chat.id
+            elif isinstance(event, CallbackQuery):
+                chat_id = event.message.chat.id
 
-        # Message → сообщение в тот же чат
-        elif isinstance(event, Message):
-            try:
-                await event.answer(text, reply_markup=kb)
-                sent = True
-                logger.info(f"[GATE] sent to message chat for {user_id}")
-            except Exception as e:
-                logger.exception(f"[GATE] message send failed: {e}")
+            if chat_id is not None:
+                try:
+                    await bot.send_message(chat_id, text, reply_markup=kb)
+                    sent = True
+                    logger.info(f"[GATE] sent via bot.send_message to chat_id={chat_id}")
+                except Exception as e:
+                    err = e
+                    logger.exception(f"[GATE] bot.send_message failed: {e}")
 
-        # Fallback: отправка через bot напрямую
+        # 3. Fallback: event.answer()
         if not sent:
-            logger.warning(f"[GATE] primary send failed, fallback for {user_id}")
+            try:
+                if isinstance(event, Message):
+                    await event.answer(text, reply_markup=kb)
+                    sent = True
+                    logger.info(f"[GATE] sent via event.answer (Message)")
+                elif isinstance(event, CallbackQuery):
+                    await event.message.answer(text, reply_markup=kb)
+                    sent = True
+                    logger.info(f"[GATE] sent via event.message.answer (Callback)")
+            except Exception as e:
+                err = e
+                logger.exception(f"[GATE] fallback send failed: {e}")
+
+        # 4. Если всё равно не отправилось — логируем явно
+        if not sent:
+            logger.error(
+                f"[GATE] FAILED to deliver subscription gate to user {user_id}. "
+                f"Last error: {err}"
+            )
 
         try:
             await track(
