@@ -20,13 +20,15 @@ from bot.handlers import (
     timezone,
 )
 from admin import handlers as admin_handlers
+from admin.broadcast import router as broadcast_router
 from admin.subscriptions_wizard import router as subs_wizard_router
 
 
 def register_handlers(root_router: Router) -> None:
-    # 1. Админка + FSM-wizard подписок
+    # 1. Админка + мастера
     root_router.include_router(admin_handlers.router)
     root_router.include_router(subs_wizard_router)
+    root_router.include_router(broadcast_router)
 
     # 2. Пользовательские
     root_router.include_router(start.router)
@@ -44,9 +46,9 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(blocking.router)
     root_router.include_router(advertising.router)
 
-    # 3. Чаты — до catch-all
+    # 3. Чаты
     root_router.include_router(chats.router)
 
-    # 4. Catch-all — в самом конце
+    # 4. Catch-all
     root_router.include_router(messaging.router)
     root_router.include_router(support.router)

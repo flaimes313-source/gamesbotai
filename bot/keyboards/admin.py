@@ -31,6 +31,9 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚙️ Feature flags", callback_data="adm_flags"),
                 InlineKeyboardButton(text="🆘 Поддержка", callback_data="adm_support"),
             ],
+            [
+                InlineKeyboardButton(text="📨 Рассылка", callback_data="adm_broadcast"),
+            ],
         ]
     )
 
@@ -126,5 +129,61 @@ def support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
                 text="✅ Закрыть без ответа",
                 callback_data=f"adm_close_{ticket_id}",
             )],
+        ]
+    )
+
+
+# ============================================================
+# РАССЫЛКА — выбор типа
+# ============================================================
+def broadcast_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Только текст", callback_data="bc_type_text")],
+            [InlineKeyboardButton(text="🖼 Только картинка", callback_data="bc_type_photo")],
+            [InlineKeyboardButton(text="🖼+✍️ Картинка + текст", callback_data="bc_type_photo_text")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_back")],
+        ]
+    )
+
+
+# ============================================================
+# РАССЫЛКА — добавление кнопки с URL
+# ============================================================
+def broadcast_add_button_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔗 Добавить кнопку со ссылкой",
+                callback_data="bc_add_button",
+            )],
+            [InlineKeyboardButton(
+                text="➡️ Без кнопки, дальше",
+                callback_data="bc_no_button",
+            )],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="bc_cancel")],
+        ]
+    )
+
+
+# ============================================================
+# РАССЫЛКА — отмена
+# ============================================================
+def broadcast_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="bc_cancel")],
+        ]
+    )
+
+
+# ============================================================
+# РАССЫЛКА — подтверждение
+# ============================================================
+def broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Отправить всем", callback_data="bc_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="bc_cancel")],
         ]
     )
