@@ -1,99 +1,32 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
-from config import config
+from bot.keyboards.main import main_menu_kb
 from database.connection import async_session
 from database.models import SubscriptionCampaign, SubscriptionEvent, User
 from services.analytics.tracker import track
 from services.feature_flags import is_enabled
 from services.subscriptions.checker import is_subscribed
-from services.whitelist import is_whitelisted
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
-OFFER_COOLDOWN_DAYS = 7
-
 
 async def maybe_offer_subscription(bot, telegram_id: int) -> None:
-    if not await is_enabled("mandatory_subscriptions_enabled", default=False):
-        return
-
-    if telegram_id in config.ADMIN_IDS:
-        return
-
-    if await is_whitelisted(telegram_id):
-        logger.info(f"Subscription offer skipped: {telegram_id} in whitelist")
-        return
-
-    async with async_session() as session:
-        user = (await session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )).scalar_one_or_none()
-        if user is None:
-            return
-
-        now = datetime.now(timezone.utc)
-
-        if user.last_subscription_offer and (now - user.last_subscription_offer) < timedelta(days=OFFER_COOLDOWN_DAYS):
-            return
-
-        campaign = (await session.execute(
-            select(SubscriptionCampaign)
-            .where(SubscriptionCampaign.is_active.is_(True))
-            .limit(1)
-        )).scalar_one_or_none()
-
-        if campaign is None:
-            return
-
-        existing = (await session.execute(
-            select(SubscriptionEvent).where(
-                SubscriptionEvent.campaign_id == campaign.id,
-                SubscriptionEvent.user_id == user.id,
-                SubscriptionEvent.status == "confirmed",
-            )
-        )).scalar_one_or_none()
-
-        if existing:
-            return
-
-        user.last_subscription_offer = now
-        await session.commit()
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📢 Подписаться",
-                url=campaign.channel_link or "https://t.me/",
-            )],
-            [InlineKeyboardButton(
-                text="✅ Проверить подписку",
-                callback_data=f"sub_check_{campaign.id}",
-            )],
-        ]
-    )
-
-    try:
-        await bot.send_message(
-            telegram_id,
-            "🎁 <b>Для тебя новая возможность!</b>\n\n"
-            "Хочешь узнать, кто из игроков максимально похож на тебя?\n"
-            "Подпишись на канал партнёра, чтобы открыть функцию.",
-            reply_markup=kb,
-        )
-        await track("subscription_offer_shown", telegram_id=telegram_id, payload={"campaign_id": campaign.id})
-    except Exception:
-        logger.exception("Subscription offer send failed")
+    """
+    Пассивный оффер — больше не используется.
+    Основной гейт теперь в MandatorySubscriptionMiddleware.
+    """
+    return
 
 
 @router.callback_query(F.data.startswith("sub_check_"))
 async def cb_sub_check(callback: CallbackQuery):
-    await callback.answer()
+    await callback.answer("Проверяю подписку…")
     campaign_id = int(callback.data.replace("sub_check_", ""))
 
     if not await is_enabled("mandatory_subscriptions_enabled", default=False):
@@ -116,11 +49,34 @@ async def cb_sub_check(callback: CallbackQuery):
         await callback.message.answer("⚠️ Кампания настроена некорректно.")
         return
 
+    channel_url = campaign.channel_link or (
+        f"https://t.me/{campaign.channel_username}"
+        if campaign.channel_username
+        else "https://t.me/"
+    )
+
+    # Проверяем через Telegram
     ok = await is_subscribed(callback.bot, callback.from_user.id, campaign.channel_id)
+
     if not ok:
-        await callback.message.answer("❌ Пока не вижу подписку. Подпишись и попробуй снова.")
+        await callback.message.answer(
+            "❌ <b>Пока не вижу подписку</b>\n\n"
+            f"Убедись, что ты подписан на канал:\n"
+            f"👉 {channel_url}\n\n"
+            "После подписки нажми «✅ Я подписался» снова.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📢 Подписаться", url=channel_url)],
+                    [InlineKeyboardButton(
+                        text="✅ Я подписался",
+                        callback_data=f"sub_check_{campaign.id}",
+                    )],
+                ]
+            ),
+        )
         return
 
+    # Сохраняем подтверждение
     async with async_session() as session:
         existing = (await session.execute(
             select(SubscriptionEvent).where(
@@ -128,10 +84,6 @@ async def cb_sub_check(callback: CallbackQuery):
                 SubscriptionEvent.user_id == user.id,
             )
         )).scalar_one_or_none()
-
-        if existing and existing.status == "confirmed":
-            await callback.message.answer("✅ Подписка уже подтверждена ранее.")
-            return
 
         now = datetime.now(timezone.utc)
 
@@ -157,5 +109,26 @@ async def cb_sub_check(callback: CallbackQuery):
 
         await session.commit()
 
-    await track("subscription_confirmed", telegram_id=callback.from_user.id, payload={"campaign_id": campaign_id})
-    await callback.message.answer("🎉 Спасибо! Функция разблокирована.")
+    await track(
+        "subscription_confirmed",
+        telegram_id=callback.from_user.id,
+        payload={"campaign_id": campaign_id},
+    )
+
+    try:
+        await callback.message.edit_text(
+            "🎉 <b>Спасибо за подписку!</b>\n\n"
+            "Теперь тебе доступны все функции бота.\n\n"
+            "📸 Отправь фото — получишь смешной AI-профиль.",
+        )
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        "👋 <b>Добро пожаловать!</b>\n\n"
+        "Отправь мне фотографию — и я сделаю тебе смешной игровой профиль.\n\n"
+        "📸 <b>Просто отправь фото прямо в чат!</b>\n\n"
+        "Кнопки внизу — профиль, поиск игроков, сравнение с друзьями, "
+        "настройки и другое.",
+        reply_markup=main_menu_kb(),
+    )

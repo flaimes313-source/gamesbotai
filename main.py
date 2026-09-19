@@ -32,6 +32,7 @@ try:
 
     _log_boot("Importing middlewares...")
     from bot.middlewares.feature_flags import BotEnabledMiddleware
+    from bot.middlewares.mandatory_subscription import MandatorySubscriptionMiddleware
 
     _log_boot("Importing handlers...")
     from bot.handlers import register_handlers
@@ -124,13 +125,12 @@ async def main() -> None:
     )
 
     logger.info("Creating Dispatcher with MemoryStorage (no Redis)...")
-    # ⚠️ Используем MemoryStorage — FSM-состояния хранятся в памяти процесса.
-    # При перезапуске бота незавершённые wizard'ы сбрасываются — это допустимо.
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
     logger.info("Registering middlewares...")
     dp.update.middleware(BotEnabledMiddleware())
+    dp.update.middleware(MandatorySubscriptionMiddleware())
 
     logger.info("Registering handlers...")
     register_handlers(dp)

@@ -93,7 +93,6 @@ async def cmd_start(message: Message):
 
     referrer_id = None
 
-    # Проверка флага рефералов из БД
     referrals_on = await is_enabled("referrals_enabled", default=True)
 
     if payload and payload.startswith("ref_") and referrals_on:
