@@ -2,14 +2,19 @@ from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    Message,
+)
 from sqlalchemy import select
 
 from bot.keyboards.main import main_menu_kb, send_photo_kb
 from config import config
 from database.connection import async_session
-from database.models import User
+from database.models import PhotoAnalysis, Profile, User
 from services.analytics.tracker import track
+from services.cards.generator import generate_card
 from services.feature_flags import is_enabled
 from utils.logging import get_logger
 
@@ -17,6 +22,9 @@ router = Router()
 logger = get_logger(__name__)
 
 
+# ============================================================
+# Таймзона по языку Telegram
+# ============================================================
 def _guess_timezone(language_code: str | None) -> str:
     mapping = {
         "ru": "Europe/Moscow",
@@ -35,6 +43,9 @@ def _guess_timezone(language_code: str | None) -> str:
     return mapping.get((language_code or "").lower(), "Europe/Moscow")
 
 
+# ============================================================
+# Создание / получение пользователя
+# ============================================================
 async def get_or_create_user(
     telegram_id: int,
     username: str | None,
@@ -83,6 +94,89 @@ async def get_or_create_user(
         return user
 
 
+# ============================================================
+# Карточка пригласившего — показывается другу при /start ref_X
+# ============================================================
+async def _send_referrer_card(message: Message, referrer_user_id: int) -> None:
+    """
+    Отправляет другу карточку того, кто его пригласил.
+    Если у пригласившего нет профиля — ничего не делает.
+    """
+    async with async_session() as session:
+        referrer = (await session.execute(
+            select(User).where(User.id == referrer_user_id)
+        )).scalar_one_or_none()
+
+        if referrer is None:
+            return
+
+        profile = (await session.execute(
+            select(Profile)
+            .where(Profile.user_id == referrer.id)
+            .order_by(Profile.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+        if profile is None:
+            return
+
+        analysis = (await session.execute(
+            select(PhotoAnalysis)
+            .where(PhotoAnalysis.user_id == referrer.id)
+            .order_by(PhotoAnalysis.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+    # Собираем данные для карточки
+    if analysis and analysis.analysis_json:
+        analysis_data = analysis.analysis_json
+    else:
+        analysis_data = {
+            "archetype": profile.archetype,
+            "short_description": profile.description or "",
+            "scores": {
+                "charisma": profile.charisma,
+                "confidence": profile.confidence,
+                "humor": profile.humor,
+                "energy": profile.energy,
+                "sociability": profile.sociability,
+                "intellect": profile.intellect,
+                "creativity": profile.creativity,
+                "calmness": profile.calmness,
+                "chaos": profile.chaos,
+                "leadership": profile.leadership,
+            },
+            "danger_level": profile.danger_level,
+            "vibe": profile.vibe or "",
+        }
+
+    referrer_name = referrer.first_name or "Твой друг"
+    bot_username = (await message.bot.get_me()).username
+
+    caption = (
+        f"👋 <b>Тебя пригласил(а) {referrer_name}!</b>\n\n"
+        f"Посмотри, какой у него профиль 👇\n\n"
+        f"🧨 <b>{profile.archetype}</b>\n\n"
+        f"Хочешь сравнить свои показатели? Отправь своё фото — "
+        f"и мы устроим дуэль 😏"
+    )
+
+    try:
+        card_bytes = generate_card(
+            analysis_data,
+            referrer.username if referrer.show_username else None,
+            bot_username,
+        )
+        photo_input = BufferedInputFile(card_bytes, filename="ref_card.png")
+        await message.answer_photo(photo_input, caption=caption)
+    except Exception:
+        logger.exception("Failed to send referrer card")
+        await message.answer(caption)
+
+
+# ============================================================
+# /start
+# ============================================================
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     payload = None
@@ -92,7 +186,6 @@ async def cmd_start(message: Message):
             payload = args[1].strip()
 
     referrer_id = None
-
     referrals_on = await is_enabled("referrals_enabled", default=True)
 
     if payload and payload.startswith("ref_") and referrals_on:
@@ -114,18 +207,33 @@ async def cmd_start(message: Message):
         language_code=message.from_user.language_code,
     )
 
-    text = (
-        "👋 <b>Привет!</b>\n\n"
-        "Я — AI-бот социальной игры.\n"
-        "Отправь мне фотографию — и я сделаю тебе смешной игровой профиль, "
-        "которым захочется поделиться.\n\n"
-        "📸 <b>Просто отправь фото прямо в чат!</b>\n\n"
-        "Кнопки внизу — профиль, поиск игроков, сравнение с друзьями, "
-        "настройки и другое."
-    )
+    if referrer_id:
+        # Показываем карточку пригласившего
+        await _send_referrer_card(message, referrer_id)
+
+        text = (
+            "🎉 <b>Ты в игре!</b>\n\n"
+            "Отправь своё фото — я сделаю тебе смешной AI-профиль, "
+            "а потом сравним твои результаты с другом!\n\n"
+            "📸 <b>Просто отправь фото прямо в чат!</b>"
+        )
+    else:
+        text = (
+            "👋 <b>Привет!</b>\n\n"
+            "Я — AI-бот социальной игры.\n"
+            "Отправь мне фотографию — и я сделаю тебе смешной игровой профиль, "
+            "которым захочется поделиться.\n\n"
+            "📸 <b>Просто отправь фото прямо в чат!</b>\n\n"
+            "Кнопки внизу — профиль, поиск игроков, сравнение с друзьями, "
+            "настройки и другое."
+        )
+
     await message.answer(text, reply_markup=main_menu_kb())
 
 
+# ============================================================
+# /help
+# ============================================================
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
@@ -143,6 +251,9 @@ async def cmd_help(message: Message):
     await message.answer(text)
 
 
+# ============================================================
+# Кнопка «📸 Новый анализ» из reply-меню
+# ============================================================
 @router.message(F.text == "📸 Новый анализ")
 async def new_analysis_hint(message: Message):
     await message.answer(
@@ -154,6 +265,9 @@ async def new_analysis_hint(message: Message):
     )
 
 
+# ============================================================
+# CALLBACK-И
+# ============================================================
 @router.callback_query(F.data == "send_photo")
 async def cb_send_photo(callback: CallbackQuery):
     await callback.answer()

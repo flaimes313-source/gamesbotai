@@ -54,14 +54,23 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 # SHARE
 # ============================================================
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
+    """Кнопки под карточкой: «Поделиться» + «Новый анализ»."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться с друзьями", callback_data="do_share")],
+            [InlineKeyboardButton(
+                text="📤 Поделиться с друзьями",
+                callback_data="do_share",
+            )],
+            [InlineKeyboardButton(
+                text="🔄 Новый анализ",
+                callback_data="new_analysis",
+            )],
         ]
     )
 
 
 def share_link_kb(share_url: str) -> InlineKeyboardMarkup:
+    """Кнопка «Открыть шаринг» — открывает системный Telegram-шаринг."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Открыть шаринг", url=share_url)],
@@ -84,6 +93,7 @@ def settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Приватность", callback_data="privacy_settings")],
+            [InlineKeyboardButton(text="🌍 Часовой пояс", callback_data="tz_menu")],
             [InlineKeyboardButton(text="🎮 Социальная игра", callback_data="game_menu")],
             [InlineKeyboardButton(text="💎 PRO", callback_data="pro_menu")],
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support_menu")],

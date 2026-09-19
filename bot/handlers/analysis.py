@@ -1,11 +1,17 @@
 import io
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import func, select
 
 from bot.handlers.start import get_or_create_user
-from bot.keyboards.main import share_kb, share_link_kb
+from bot.keyboards.main import share_kb
 from config import config
 from database.connection import async_session
 from database.models import PhotoAnalysis, User
@@ -15,7 +21,8 @@ from services.analysis.photo_analysis import analyze_photo
 from services.analysis.profile_builder import build_profile
 from services.cards.generator import generate_card
 from services.experiments import get_variant, pick_prompt_by_variant
-from services.rate_limit import check_and_increment, is_unlimited
+from services.rate_limit import check_and_increment
+from services.share_calls import pick_share_call
 from utils.logging import get_logger
 
 router = Router()
@@ -48,12 +55,6 @@ def _build_result_text(analysis: dict) -> str:
 
 async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
     try:
-        from bot.handlers.subscriptions import maybe_offer_subscription
-        await maybe_offer_subscription(bot, telegram_id)
-    except Exception:
-        logger.exception("Subscription offer hook failed")
-
-    try:
         from services.advertising.broadcaster import maybe_send_ad
         await maybe_send_ad(bot, telegram_id)
     except Exception:
@@ -73,10 +74,8 @@ async def handle_photo(message: Message):
         first_name=message.from_user.first_name,
     )
 
-    # --- Проверка лимита ---
-    unlimited = await is_unlimited(telegram_id)
+    # Rate limit
     allowed, used, limit = await check_and_increment(telegram_id, user.id)
-
     if not allowed:
         await message.answer(
             f"⚠️ Ты достиг дневного лимита AI-анализов ({used}/{limit}).\n\n"
@@ -85,12 +84,9 @@ async def handle_photo(message: Message):
         )
         return
 
-    if unlimited:
-        logger.info(f"AI usage: user={user.id} UNLIMITED (admin/whitelist)")
-    else:
-        logger.info(f"AI usage: user={user.id} {used}/{limit}")
+    logger.info(f"AI usage: user={user.id} {used}/{limit}")
 
-    # --- Скачиваем фото ---
+    # Скачиваем
     try:
         image_bytes = await _download_photo(message)
     except Exception:
@@ -100,12 +96,12 @@ async def handle_photo(message: Message):
 
     await track("analysis_started", telegram_id=telegram_id)
 
-    # --- A/B-тест промпта ---
+    # A/B промт
     variant = await get_variant("photo_prompt", telegram_id)
     prompt_override, prompt_version = pick_prompt_by_variant(variant)
     logger.info(f"A/B: user={telegram_id} variant={variant} prompt={prompt_version}")
 
-    # --- AI-анализ ---
+    # AI
     try:
         analysis = await analyze_photo(image_bytes, prompt_override=prompt_override)
     except Exception:
@@ -115,7 +111,7 @@ async def handle_photo(message: Message):
 
     await track("analysis_completed", telegram_id=telegram_id)
 
-    # --- Сохраняем ---
+    # Сохраняем
     async with async_session() as session:
         photo = message.photo[-1]
         session.add(PhotoAnalysis(
@@ -130,7 +126,7 @@ async def handle_photo(message: Message):
         session.add(profile)
         await session.commit()
 
-    # --- Достижения ---
+    # Достижения
     try:
         await unlock_achievement(user.id, "first_photo")
         scores = analysis.get("scores", {}) or {}
@@ -150,31 +146,55 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Achievement unlock failed")
 
-    # --- Результат ---
+    # Результат + share-текст
     result_text = _build_result_text(analysis)
 
-    if not unlimited:
-        remaining = max(0, limit - used)
-        result_text += f"\n\n📊 Осталось запросов сегодня: <b>{remaining}</b>/{limit}"
+    bot_username = (await message.bot.get_me()).username
+    share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
+    # Персональный призыв по архетипу
+    archetype = analysis.get("archetype", "")
+    share_call = pick_share_call(archetype)
+
+    full_caption = (
+        f"{result_text}\n\n"
+        f"───────────────────\n"
+        f"{share_call}\n\n"
+        f"👉 <b>Проверь себя:</b> {share_url}"
+    )
+
+    # Обрезаем под лимит caption (1024)
+    if len(full_caption) > 1024:
+        overhead = len(share_call) + len(share_url) + 100
+        allowed_result_len = max(200, 1024 - overhead)
+        result_text_short = result_text[:allowed_result_len] + "…"
+        full_caption = (
+            f"{result_text_short}\n\n"
+            f"───────────────────\n"
+            f"{share_call}\n\n"
+            f"👉 <b>Проверь себя:</b> {share_url}"
+        )
+
+    # Карточка + caption
     try:
-        bot_username = (await message.bot.get_me()).username
         card_bytes = generate_card(analysis, message.from_user.username, bot_username)
         photo_input = BufferedInputFile(card_bytes, filename="card.png")
-        await message.answer_photo(photo_input, caption=result_text)
+        await message.answer_photo(
+            photo_input,
+            caption=full_caption,
+            reply_markup=share_kb(share_url),
+        )
     except Exception:
         logger.exception("Card generation failed")
-        await message.answer(result_text)
-
-    await message.answer(
-        "📤 Поделись результатом с друзьями — пусть тоже пройдут анализ!",
-        reply_markup=share_kb(),
-    )
+        await message.answer(full_caption, reply_markup=share_kb(share_url))
 
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
 
+# ============================================================
+# Кнопка «Поделиться» — инструкция + ссылка
+# ============================================================
 @router.callback_query(F.data == "do_share")
 async def cb_do_share(callback: CallbackQuery):
     await callback.answer()
@@ -184,21 +204,71 @@ async def cb_do_share(callback: CallbackQuery):
             select(User).where(User.telegram_id == callback.from_user.id)
         )).scalar_one_or_none()
 
-    if user is None:
-        await callback.message.answer("Сначала отправь фото!")
-        return
+        if user is None:
+            await callback.message.answer("Сначала отправь фото!")
+            return
+
+        # Последний профиль для архетипа
+        profile_archetype = None
+        from database.models import Profile
+        profile = (await session.execute(
+            select(Profile)
+            .where(Profile.user_id == user.id)
+            .order_by(Profile.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if profile:
+            profile_archetype = profile.archetype
 
     bot_username = (await callback.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
-    share_text = "Мне AI выдал смешной профиль 😂 Проверь себя!"
+
+    # Персональный призыв
+    share_call = pick_share_call(profile_archetype)
+
+    share_text = f"Мне AI выдал смешной профиль 😂 {share_call}"
     share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"
 
     await track("share_clicked", telegram_id=callback.from_user.id)
 
-    await callback.message.answer(
-        "Нажми, чтобы отправить друзьям:",
-        reply_markup=share_link_kb(share_link),
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📤 Отправить ссылку в Telegram",
+                url=share_link,
+            )],
+            [InlineKeyboardButton(
+                text="📋 Скопировать ссылку",
+                callback_data=f"copy_link_{user.id}",
+            )],
+            [InlineKeyboardButton(
+                text="👥 Мои чаты",
+                callback_data="chat_list",
+            )],
+        ]
     )
+
+    await callback.message.answer(
+        "📤 <b>Как поделиться с друзьями</b>\n\n"
+        "<b>Вариант 1 — со своей карточкой (рекомендую):</b>\n"
+        "1️⃣ Нажми на <b>карточку выше</b> и удерживай её.\n"
+        "2️⃣ Выбери <b>«Переслать»</b> (Forward).\n"
+        "3️⃣ Выбери друга — он получит <b>карточку + текст + ссылку</b>.\n\n"
+        "<b>Вариант 2 — только ссылка:</b>\n"
+        "Отправь другу ссылку ниже 👇\n\n"
+        f"<code>{share_url}</code>\n\n"
+        f"<i>{share_call}</i>",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("copy_link_"))
+async def cb_copy_link(callback: CallbackQuery):
+    await callback.answer("Ссылка скопирована!")
+    user_id = int(callback.data.replace("copy_link_", ""))
+    bot_username = (await callback.bot.get_me()).username
+    share_url = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    await callback.message.answer(f"<code>{share_url}</code>")
 
 
 @router.callback_query(F.data == "new_analysis")
