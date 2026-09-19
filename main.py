@@ -16,6 +16,7 @@ try:
     from aiogram import Bot, Dispatcher
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
+    from aiogram.fsm.storage.memory import MemoryStorage
     from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
     _log_boot("Importing config...")
@@ -122,8 +123,11 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    logger.info("Creating Dispatcher...")
-    dp = Dispatcher()
+    logger.info("Creating Dispatcher with MemoryStorage (no Redis)...")
+    # ⚠️ Используем MemoryStorage — FSM-состояния хранятся в памяти процесса.
+    # При перезапуске бота незавершённые wizard'ы сбрасываются — это допустимо.
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
 
     logger.info("Registering middlewares...")
     dp.update.middleware(BotEnabledMiddleware())

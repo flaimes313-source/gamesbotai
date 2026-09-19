@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
+from admin.subscriptions_wizard import start_wizard
 from bot.keyboards.admin import (
     admin_menu_kb,
     ads_menu_kb,
@@ -390,18 +392,12 @@ async def cb_subs_list(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "subs_new")
-async def cb_subs_new(callback: CallbackQuery):
+async def cb_subs_new(callback: CallbackQuery, state: FSMContext):
+    """Запуск FSM-мастера создания кампании."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
-    ADMIN_STATE[callback.from_user.id] = {"action": "subs_new_step1"}
-    await callback.message.answer(
-        "➕ Новая кампания подписок\n\n"
-        "Отправь в формате:\n"
-        "<code>Название | @channel_username | https://t.me/channel</code>\n\n"
-        "⚠️ Бот должен быть админом канала!"
-    )
+    await start_wizard(callback, state)
 
 
 @router.callback_query(F.data == "subs_stop_all")
@@ -611,7 +607,7 @@ async def cmd_reply(message: Message):
 
 
 # ============================================================
-# ВВОД ТЕКСТА ОТ АДМИНА
+# ВВОД ТЕКСТА ОТ АДМИНА (пошаговые диалоги)
 # ============================================================
 @router.message(F.text, lambda m: m.from_user.id in ADMIN_STATE)
 async def admin_input(message: Message):
@@ -624,6 +620,7 @@ async def admin_input(message: Message):
 
     action = state.get("action")
 
+    # ---------- Реклама ----------
     if action == "ads_new_step1":
         parts = [p.strip() for p in message.text.split("|", 1)]
         if len(parts) != 2:
@@ -645,39 +642,7 @@ async def admin_input(message: Message):
         )
         return
 
-    if action == "subs_new_step1":
-        parts = [p.strip() for p in message.text.split("|")]
-        if len(parts) != 3:
-            await message.answer("❌ Формат: <code>Название | @channel | https://t.me/channel</code>")
-            return
-
-        name, channel_username, channel_link = parts
-        channel_username_clean = channel_username.lstrip("@")
-
-        async with async_session() as session:
-            c = SubscriptionCampaign(
-                name=name,
-                status="active",
-                is_active=True,
-                channel_id=f"@{channel_username_clean}",
-                channel_username=channel_username_clean,
-                channel_link=channel_link,
-                price_per_subscription=2.0,
-                subscriber_limit=1000,
-                budget=2000,
-                started_at=datetime.now(timezone.utc),
-            )
-            session.add(c)
-            await session.commit()
-            await session.refresh(c)
-
-        ADMIN_STATE.pop(message.from_user.id, None)
-        await message.answer(
-            f"✅ Кампания #{c.id} создана.\n"
-            f"Канал: {channel_link}"
-        )
-        return
-
+    # ---------- Промокоды ----------
     if action == "promos_new_step1":
         parts = [p.strip() for p in message.text.split("|")]
         if len(parts) != 3:

@@ -17,25 +17,22 @@ from bot.handlers import (
     chats,
     messaging,
     support,
+    timezone,
 )
 from admin import handlers as admin_handlers
+from admin.subscriptions_wizard import router as subs_wizard_router
 
 
 def register_handlers(root_router: Router) -> None:
-    """
-    Порядок регистрации:
-    1. Админка — первой.
-    2. Точные reply-хендлеры и callback-и.
-    3. Чаты — до messaging (там есть catch-all).
-    4. Catch-all (messaging, support) — в самом конце.
-    """
-    # 1. Админка
+    # 1. Админка + FSM-wizard подписок
     root_router.include_router(admin_handlers.router)
+    root_router.include_router(subs_wizard_router)
 
     # 2. Пользовательские
     root_router.include_router(start.router)
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
+    root_router.include_router(timezone.router)
     root_router.include_router(matching.router)
     root_router.include_router(compare.router)
     root_router.include_router(tests.router)
@@ -47,11 +44,9 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(blocking.router)
     root_router.include_router(advertising.router)
 
-    # 3. Чаты — с catch-all для ввода текста
+    # 3. Чаты — до catch-all
     root_router.include_router(chats.router)
 
-    # 4. Приколы, стили, catch-all для «прикола»
+    # 4. Catch-all — в самом конце
     root_router.include_router(messaging.router)
-
-    # 5. Поддержка — последней
     root_router.include_router(support.router)
