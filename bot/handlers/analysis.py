@@ -29,6 +29,9 @@ router = Router()
 logger = get_logger(__name__)
 
 
+# ============================================================
+# Загрузка фото
+# ============================================================
 async def _download_photo(message: Message) -> bytes:
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
@@ -37,6 +40,9 @@ async def _download_photo(message: Message) -> bytes:
     return buf.getvalue()
 
 
+# ============================================================
+# Текст результата
+# ============================================================
 def _build_result_text(analysis: dict) -> str:
     scores = analysis.get("scores", {}) or {}
     return (
@@ -53,6 +59,9 @@ def _build_result_text(analysis: dict) -> str:
     )
 
 
+# ============================================================
+# Хуки после анализа
+# ============================================================
 async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
     try:
         from services.advertising.broadcaster import maybe_send_ad
@@ -61,6 +70,72 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
         logger.exception("Ad hook failed")
 
 
+# ============================================================
+# Достижения для карточки
+# ============================================================
+async def _get_achievement_badges(user_id: int) -> list:
+    from database.models import UserAchievement
+
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(UserAchievement)
+            .where(UserAchievement.user_id == user_id)
+            .order_by(UserAchievement.unlocked_at.desc())
+            .limit(5)
+        )).scalars().all()
+
+    emoji_map = {
+        "first_photo": "📸",
+        "first_share": "📤",
+        "friend_joined": "👥",
+        "first_test": "🧪",
+        "five_tests": "🎓",
+        "chaos_90": "🧨",
+        "charisma_90": "✨",
+        "five_analyses": "🔥",
+        "first_match": "🎯",
+        "ten_messages": "💬",
+        "pro_first": "💎",
+    }
+
+    return [f"{emoji_map.get(a.achievement_code, '🏆')}×{i + 1}" for i, a in enumerate(rows[:3])]
+
+
+# ============================================================
+# QR-код
+# ============================================================
+async def _send_qr_code(message: Message, url: str) -> None:
+    try:
+        import qrcode
+        from io import BytesIO
+
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=2,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="white", back_color=(18, 18, 30))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+
+        await message.answer_photo(
+            BufferedInputFile(buf.getvalue(), filename="qr.png"),
+            caption=(
+                "📱 <b>Наведи камеру</b> — друг попадёт в бота\n"
+                "и сразу увидит твой профиль!"
+            ),
+        )
+    except Exception:
+        logger.exception("QR generation failed")
+
+
+# ============================================================
+# ОБРАБОТКА ФОТО
+# ============================================================
 @router.message(F.photo)
 async def handle_photo(message: Message):
     telegram_id = message.from_user.id
@@ -86,7 +161,7 @@ async def handle_photo(message: Message):
 
     logger.info(f"AI usage: user={user.id} {used}/{limit}")
 
-    # Скачиваем
+    # Скачиваем фото
     try:
         image_bytes = await _download_photo(message)
     except Exception:
@@ -96,12 +171,12 @@ async def handle_photo(message: Message):
 
     await track("analysis_started", telegram_id=telegram_id)
 
-    # A/B промт
+    # A/B-тест промта
     variant = await get_variant("photo_prompt", telegram_id)
     prompt_override, prompt_version = pick_prompt_by_variant(variant)
     logger.info(f"A/B: user={telegram_id} variant={variant} prompt={prompt_version}")
 
-    # AI
+    # Анализ AI
     try:
         analysis = await analyze_photo(image_bytes, prompt_override=prompt_override)
     except Exception:
@@ -146,16 +221,17 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Achievement unlock failed")
 
-    # Результат + share-текст
+    # Текст результата
     result_text = _build_result_text(analysis)
 
     bot_username = (await message.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
-    # Персональный призыв по архетипу
+    # Персональный призыв
     archetype = analysis.get("archetype", "")
     share_call = pick_share_call(archetype)
 
+    # Caption карточки
     full_caption = (
         f"{result_text}\n\n"
         f"───────────────────\n"
@@ -163,7 +239,6 @@ async def handle_photo(message: Message):
         f"👉 <b>Проверь себя:</b> {share_url}"
     )
 
-    # Обрезаем под лимит caption (1024)
     if len(full_caption) > 1024:
         overhead = len(share_call) + len(share_url) + 100
         allowed_result_len = max(200, 1024 - overhead)
@@ -175,15 +250,22 @@ async def handle_photo(message: Message):
             f"👉 <b>Проверь себя:</b> {share_url}"
         )
 
-    # Карточка + caption
+    # Генерируем карточку с достижениями
     try:
-        card_bytes = generate_card(analysis, message.from_user.username, bot_username)
+        achievements_badges = await _get_achievement_badges(user.id)
+        analysis_with_badges = dict(analysis)
+        analysis_with_badges["achievements"] = achievements_badges
+
+        card_bytes = generate_card(analysis_with_badges, message.from_user.username, bot_username)
         photo_input = BufferedInputFile(card_bytes, filename="card.png")
         await message.answer_photo(
             photo_input,
             caption=full_caption,
             reply_markup=share_kb(share_url),
         )
+
+        # QR-код отдельно
+        await _send_qr_code(message, share_url)
     except Exception:
         logger.exception("Card generation failed")
         await message.answer(full_caption, reply_markup=share_kb(share_url))
@@ -193,7 +275,7 @@ async def handle_photo(message: Message):
 
 
 # ============================================================
-# Кнопка «Поделиться» — инструкция + ссылка
+# Кнопка «Поделиться»
 # ============================================================
 @router.callback_query(F.data == "do_share")
 async def cb_do_share(callback: CallbackQuery):
@@ -208,8 +290,6 @@ async def cb_do_share(callback: CallbackQuery):
             await callback.message.answer("Сначала отправь фото!")
             return
 
-        # Последний профиль для архетипа
-        profile_archetype = None
         from database.models import Profile
         profile = (await session.execute(
             select(Profile)
@@ -217,13 +297,10 @@ async def cb_do_share(callback: CallbackQuery):
             .order_by(Profile.id.desc())
             .limit(1)
         )).scalar_one_or_none()
-        if profile:
-            profile_archetype = profile.archetype
+        profile_archetype = profile.archetype if profile else None
 
     bot_username = (await callback.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
-
-    # Персональный призыв
     share_call = pick_share_call(profile_archetype)
 
     share_text = f"Мне AI выдал смешной профиль 😂 {share_call}"

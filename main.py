@@ -64,7 +64,7 @@ except Exception as e:
 
 async def setup_commands(bot: Bot) -> None:
     public_commands = [
-        BotCommand(command="start", description="Начать работу"),
+        BotCommand(command="start", description="Узнать свой вайб"),
         BotCommand(command="help", description="Помощь"),
     ]
     await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
