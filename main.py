@@ -41,6 +41,9 @@ try:
     _log_boot("Importing chat_reminder...")
     from services.notifications.chat_reminder import chat_reminder_loop
 
+    _log_boot("Importing db_cleanup...")
+    from services.notifications.db_cleanup import db_cleanup_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -130,6 +133,12 @@ async def main() -> None:
         asyncio.create_task(chat_reminder_loop(bot))
     except Exception:
         logger.exception("Failed to start chat reminder loop")
+
+    logger.info("Starting DB cleanup loop...")
+    try:
+        asyncio.create_task(db_cleanup_loop())
+    except Exception:
+        logger.exception("Failed to start DB cleanup loop")
 
     logger.info("Polling started.")
     try:

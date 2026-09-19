@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
@@ -17,13 +17,35 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# Создание / получение пользователя
+# Автодетект таймзоны по языку Telegram
+# ============================================================
+def _guess_timezone(language_code: str | None) -> str:
+    mapping = {
+        "ru": "Europe/Moscow",
+        "uk": "Europe/Kiev",
+        "be": "Europe/Minsk",
+        "kk": "Asia/Almaty",
+        "uz": "Asia/Tashkent",
+        "az": "Asia/Baku",
+        "hy": "Asia/Yerevan",
+        "ka": "Asia/Tbilisi",
+        "en": "UTC",
+        "de": "Europe/Berlin",
+        "fr": "Europe/Paris",
+        "tr": "Europe/Istanbul",
+    }
+    return mapping.get((language_code or "").lower(), "Europe/Moscow")
+
+
+# ============================================================
+# Получить или создать пользователя
 # ============================================================
 async def get_or_create_user(
     telegram_id: int,
     username: str | None,
     first_name: str | None,
     referrer_id: int | None = None,
+    language_code: str | None = None,
 ) -> User:
     async with async_session() as session:
         user = (await session.execute(
@@ -31,22 +53,24 @@ async def get_or_create_user(
         )).scalar_one_or_none()
 
         if user is None:
+            tz = _guess_timezone(language_code)
+
             user = User(
                 telegram_id=telegram_id,
                 username=username,
                 first_name=first_name,
                 is_admin=(telegram_id in config.ADMIN_IDS),
                 referrer_id=referrer_id,
+                timezone=tz,
+                timezone_confirmed=False,
             )
             session.add(user)
             await session.commit()
             await session.refresh(user)
-            logger.info(f"New user created: {telegram_id} ref={referrer_id}")
+            logger.info(f"New user created: {telegram_id} ref={referrer_id} tz={tz}")
 
-            # Трекаем нового пользователя
             await track("new_users", telegram_id=telegram_id)
 
-            # Трекаем реферала
             if referrer_id:
                 await track(
                     "referral_completed",
@@ -54,9 +78,7 @@ async def get_or_create_user(
                     payload={"referrer_id": referrer_id},
                 )
         else:
-            # Обновляем last_active_at
-            user.last_active_at = datetime.utcnow()
-            # Обновим username/имя, если изменились
+            user.last_active_at = datetime.now(timezone.utc)
             if username and user.username != username:
                 user.username = username
             if first_name and user.first_name != first_name:
@@ -81,7 +103,6 @@ async def cmd_start(message: Message):
     if payload and payload.startswith("ref_") and config.REFERRALS_ENABLED:
         try:
             referrer_id = int(payload.replace("ref_", ""))
-            # Трекаем открытие реферальной ссылки
             await track(
                 "referral_opened",
                 telegram_id=message.from_user.id,
@@ -95,6 +116,7 @@ async def cmd_start(message: Message):
         username=message.from_user.username,
         first_name=message.from_user.first_name,
         referrer_id=referrer_id,
+        language_code=message.from_user.language_code,
     )
 
     text = (
@@ -121,22 +143,21 @@ async def cmd_help(message: Message):
         "2️⃣ <b>Поделись результатом</b> — нажми «📤 Поделиться» или кнопку "
         "под карточкой. Друзья, пришедшие по твоей ссылке, смогут "
         "сравниться с тобой.\n\n"
-        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков»: 7 режимов поиска "
-        "(похожий, противоположность, самый смешной и т.д.).\n\n"
+        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков»: 7 режимов поиска.\n\n"
         "4️⃣ <b>Пройди тесты</b> — «🧪 Пройти тест»: 10 развлекательных тестов.\n\n"
-        "5️⃣ <b>Сравни с другом</b> — «👥 Сравнить»: если друг пришёл "
-        "по твоей ссылке.\n\n"
+        "5️⃣ <b>Сравни с другом</b> — «👥 Сравнить».\n\n"
         "6️⃣ <b>Собери достижения</b> — «🏆 Достижения».\n\n"
         "7️⃣ <b>PRO подписка</b> — «💎 PRO»: безлимит AI, без рекламы, "
-        "дополнительные режимы поиска.\n\n"
-        "🆘 <b>Поддержка</b> — если что-то не работает.\n\n"
-        "Управление — кнопками внизу. Отправь фото, чтобы начать!"
+        "AI-помощник в чатах.\n\n"
+        "🌍 <b>Часовой пояс</b> — настрой, чтобы уведомления приходили "
+        "в удобное время.\n\n"
+        "🆘 <b>Поддержка</b> — если что-то не работает."
     )
     await message.answer(text)
 
 
 # ============================================================
-# Кнопка «📸 Новый анализ» из reply-меню
+# Кнопка «📸 Новый анализ»
 # ============================================================
 @router.message(F.text == "📸 Новый анализ")
 async def new_analysis_hint(message: Message):
@@ -144,14 +165,13 @@ async def new_analysis_hint(message: Message):
         "📸 <b>Новый анализ</b>\n\n"
         "Просто отправь мне своё фото прямо в чат — я всё сделаю сам.\n\n"
         "💡 <b>Совет:</b> лучше всего работают обычные фото, где видно "
-        "лицо и настроение. Стикеры, рисунки и скриншоты не подойдут.\n\n"
-        "Кнопки внизу меню — для остальных функций.",
+        "лицо и настроение. Стикеры, рисунки и скриншоты не подойдут.",
         reply_markup=send_photo_kb(),
     )
 
 
 # ============================================================
-# CALLBACK-и
+# CALLBACK
 # ============================================================
 @router.callback_query(F.data == "send_photo")
 async def cb_send_photo(callback: CallbackQuery):

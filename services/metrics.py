@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -19,7 +19,7 @@ from database.models import (
 # Общая статистика
 # ============================================================
 async def full_stats() -> dict:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     day_ago = now - timedelta(days=1)
 
     async with async_session() as session:
@@ -58,8 +58,7 @@ async def full_stats() -> dict:
 # Воронка
 # ============================================================
 async def funnel_stats(days: int = 30) -> dict:
-    """Возвращает счётчики ключевых шагов воронки за N дней."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     steps = [
         ("start", "started"),
@@ -91,15 +90,7 @@ async def funnel_stats(days: int = 30) -> dict:
 # Статистика по чатам
 # ============================================================
 async def chats_stats(days: int = 7) -> dict:
-    """
-    Статистика по чатам за последние N дней:
-    - всего чатов
-    - активных чатов (с сообщениями за период)
-    - всего сообщений
-    - среднее число сообщений в активном чате
-    - топ-5 активных чатов
-    """
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     async with async_session() as session:
         total_chats = (await session.execute(select(func.count(Chat.id)))).scalar_one()
@@ -158,3 +149,18 @@ async def chats_stats(days: int = 7) -> dict:
         "avg_messages": round(avg_messages, 1),
         "top": top,
     }
+
+
+# ============================================================
+# Статистика по таймзонам (топ-5)
+# ============================================================
+async def timezones_stats() -> list[dict]:
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(User.timezone, func.count(User.id).label("cnt"))
+            .group_by(User.timezone)
+            .order_by(func.count(User.id).desc())
+            .limit(5)
+        )).all()
+
+    return [{"timezone": tz, "count": int(cnt)} for tz, cnt in rows]

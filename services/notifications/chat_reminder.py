@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from database.connection import async_session
 from database.models import Chat, Event, Message, User
 from services.analytics.tracker import track
+from services.timezones import is_night_now
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -21,8 +22,10 @@ async def send_chat_reminders(bot: Bot) -> None:
     """
     Находит пользователей, которым не ответили 24+ часа,
     и отправляет напоминание. Не спамит чаще, чем раз в 48 часов.
+
+    ⚠️ Не отправляет ночью по локальному времени юзера.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)  # ⚠️ aware UTC
     cutoff = now - timedelta(hours=REMINDER_AFTER_HOURS)
     cooldown_cutoff = now - timedelta(hours=REMINDER_COOLDOWN_HOURS)
 
@@ -44,7 +47,7 @@ async def send_chat_reminders(bot: Bot) -> None:
                 if last_msg is None:
                     continue
 
-                # Сообщение должно быть мне (я — получатель)
+                # Сообщение должно быть мне
                 if last_msg.receiver_id != me_id:
                     continue
 
@@ -56,6 +59,10 @@ async def send_chat_reminders(bot: Bot) -> None:
                     select(User).where(User.id == me_id)
                 )).scalar_one_or_none()
                 if me is None or me.is_blocked:
+                    continue
+
+                # ⚠️ Не беспокоим ночью
+                if is_night_now(me.timezone):
                     continue
 
                 # Есть ли мой ответ после этого сообщения
@@ -117,7 +124,7 @@ async def send_chat_reminders(bot: Bot) -> None:
 
 
 async def chat_reminder_loop(bot: Bot) -> None:
-    """Фоновый цикл: раз в 6 часов проверяет и шлёт напоминания."""
+    """Фоновый цикл: раз в 6 часов."""
     while True:
         try:
             await send_chat_reminders(bot)

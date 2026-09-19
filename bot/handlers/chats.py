@@ -27,14 +27,13 @@ from services.chats import (
     mark_chat_read,
     send_chat_message,
 )
+from services.timezones import humanize_datetime
 from utils.logging import get_logger
 
 router = Router()
 logger = get_logger(__name__)
 
 PENDING_CHAT_REPLY: Dict[int, int] = {}
-
-# Хранилище AI-вариантов: ключ → {chat_id, suggestions}
 _AI_SUGGESTIONS: Dict[str, dict] = {}
 
 
@@ -166,10 +165,11 @@ async def _open_chat(message_or_callback, telegram_id: int, chat_id: int) -> Non
         body_lines = []
         for m in messages:
             text = m.text or ""
+            time_str = humanize_datetime(m.created_at, me.timezone)
             if m.sender_id == me.id:
-                body_lines.append(f"<b>Ты:</b> {text}")
+                body_lines.append(f"<b>Ты</b> <i>({time_str})</i>: {text}")
             else:
-                body_lines.append(f"<b>{other_name}:</b> {text}")
+                body_lines.append(f"<b>{other_name}</b> <i>({time_str})</i>: {text}")
         body = "\n\n".join(body_lines)
 
     text = f"{header}{body}"
@@ -183,7 +183,7 @@ async def _open_chat(message_or_callback, telegram_id: int, chat_id: int) -> Non
 
 
 # ============================================================
-# Ответ в чате
+# Ответ
 # ============================================================
 @router.callback_query(F.data.startswith("chat_reply_"))
 async def cb_chat_reply(callback: CallbackQuery):
@@ -499,7 +499,6 @@ async def cb_chat_report(callback: CallbackQuery):
         "Спасибо, что помогаешь делать игру безопаснее."
     )
 
-    # Автоблокировка при 3+ жалобах
     if count_reports >= 3:
         async with async_session() as session:
             target = (await session.execute(
@@ -510,7 +509,6 @@ async def cb_chat_report(callback: CallbackQuery):
                 await session.commit()
                 logger.warning(f"Auto-blocked user {target.id} due to {count_reports} reports")
 
-    # Уведомление админам
     for admin_id in config.ADMIN_IDS:
         try:
             await callback.bot.send_message(
@@ -536,7 +534,7 @@ async def cmd_cancel(message: Message):
 
 
 # ============================================================
-# Catch-all для ввода сообщения
+# Catch-all
 # ============================================================
 @router.message(F.text & ~F.text.startswith("/"), _is_waiting_chat_reply)
 async def handle_chat_reply(message: Message):
@@ -568,12 +566,9 @@ async def handle_chat_reply(message: Message):
             ),
         )
     else:
-        await message.answer("❌ Не удалось отправить. Возможно, собеседник отключил сообщения.")
+        await message.answer("❌ Не удалось отправить.")
 
 
-# ============================================================
-# Универсальный ответ
-# ============================================================
 async def _reply(message_or_callback, text: str, kb) -> None:
     if isinstance(message_or_callback, CallbackQuery):
         try:

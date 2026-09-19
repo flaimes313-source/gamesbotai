@@ -35,6 +35,10 @@ class User(Base):
     first_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     language: Mapped[str] = mapped_column(String(8), default="ru")
 
+    # Таймзона пользователя (название IANA)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
+    timezone_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
