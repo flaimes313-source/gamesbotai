@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,120 +16,157 @@ from utils.logging import get_logger
 router = Router()
 logger = get_logger(__name__)
 
+MAX_CAMPAIGNS = 3
+
 
 async def maybe_offer_subscription(bot, telegram_id: int) -> None:
-    """
-    Пассивный оффер — больше не используется.
-    Основной гейт теперь в MandatorySubscriptionMiddleware.
-    """
+    """Не используется, гейт в middleware."""
     return
 
 
-@router.callback_query(F.data.startswith("sub_check_"))
-async def cb_sub_check(callback: CallbackQuery):
-    await callback.answer("Проверяю подписку…")
-    campaign_id = int(callback.data.replace("sub_check_", ""))
+def _build_channel_url(campaign: SubscriptionCampaign) -> str:
+    url = campaign.channel_link
+    if url and url.startswith("http"):
+        return url
+    if campaign.channel_username:
+        username = campaign.channel_username.lstrip("@")
+        return f"https://t.me/{username}"
+    return "https://t.me/telegram"
+
+
+def _build_multi_gate_kb(campaigns: List[SubscriptionCampaign]) -> InlineKeyboardMarkup:
+    rows = []
+    for c in campaigns:
+        url = _build_channel_url(c)
+        label = c.name or c.channel_username or "Канал"
+        if len(label) > 28:
+            label = label[:26] + "…"
+        rows.append([InlineKeyboardButton(text=f"📢 {label}", url=url)])
+
+    rows.append([InlineKeyboardButton(
+        text="✅ Я подписался на все",
+        callback_data="sub_check_all",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ============================================================
+# Проверка подписки — после нажатия «✅ Я подписался на все»
+# ============================================================
+@router.callback_query(F.data == "sub_check_all")
+async def cb_sub_check_all(callback: CallbackQuery):
+    await callback.answer("Проверяю…")
 
     if not await is_enabled("mandatory_subscriptions_enabled", default=False):
         await callback.message.answer("Функция временно отключена.")
         return
 
     async with async_session() as session:
-        campaign = (await session.execute(
-            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
-        )).scalar_one_or_none()
         user = (await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
         )).scalar_one_or_none()
 
-    if not campaign or not user:
-        await callback.message.answer("Кампания недоступна.")
+        campaigns = list((await session.execute(
+            select(SubscriptionCampaign)
+            .where(SubscriptionCampaign.is_active.is_(True))
+            .where(SubscriptionCampaign.channel_id.isnot(None))
+            .order_by(SubscriptionCampaign.id.asc())
+            .limit(MAX_CAMPAIGNS)
+        )).scalars().all())
+
+    if not campaigns:
+        await callback.message.answer("Нет активных кампаний.")
         return
 
-    if not campaign.channel_id:
-        await callback.message.answer("⚠️ Кампания настроена некорректно.")
+    if user is None:
+        await callback.message.answer("Сначала отправь /start.")
         return
 
-    channel_url = campaign.channel_link or (
-        f"https://t.me/{campaign.channel_username}"
-        if campaign.channel_username
-        else "https://t.me/"
-    )
+    # Проверяем каждый канал
+    subscribed: List[SubscriptionCampaign] = []
+    not_subscribed: List[SubscriptionCampaign] = []
 
-    # Проверяем через Telegram
-    ok = await is_subscribed(callback.bot, callback.from_user.id, campaign.channel_id)
-
-    if not ok:
-        await callback.message.answer(
-            "❌ <b>Пока не вижу подписку</b>\n\n"
-            f"Убедись, что ты подписан на канал:\n"
-            f"👉 {channel_url}\n\n"
-            "После подписки нажми «✅ Я подписался» снова.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="📢 Подписаться", url=channel_url)],
-                    [InlineKeyboardButton(
-                        text="✅ Я подписался",
-                        callback_data=f"sub_check_{campaign.id}",
-                    )],
-                ]
-            ),
-        )
-        return
-
-    # Сохраняем подтверждение
-    async with async_session() as session:
-        existing = (await session.execute(
-            select(SubscriptionEvent).where(
-                SubscriptionEvent.campaign_id == campaign.id,
-                SubscriptionEvent.user_id == user.id,
-            )
-        )).scalar_one_or_none()
-
-        now = datetime.now(timezone.utc)
-
-        if existing:
-            existing.status = "confirmed"
-            existing.checked_at = now
-            existing.confirmed_at = now
+    for c in campaigns:
+        ok = await is_subscribed(callback.bot, callback.from_user.id, c.channel_id)
+        if ok:
+            subscribed.append(c)
         else:
-            session.add(SubscriptionEvent(
-                campaign_id=campaign.id,
-                user_id=user.id,
-                channel_id=campaign.channel_id,
-                status="confirmed",
-                checked_at=now,
-                confirmed_at=now,
-            ))
+            not_subscribed.append(c)
 
-        cmp_row = (await session.execute(
-            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign.id)
-        )).scalar_one_or_none()
-        if cmp_row:
-            cmp_row.confirmed_subscribers += 1
+    # Сохраняем подтверждённые
+    if subscribed:
+        async with async_session() as session:
+            now = datetime.now(timezone.utc)
+            for c in subscribed:
+                existing = (await session.execute(
+                    select(SubscriptionEvent)
+                    .where(SubscriptionEvent.campaign_id == c.id)
+                    .where(SubscriptionEvent.user_id == user.id)
+                )).scalar_one_or_none()
 
-        await session.commit()
+                if existing:
+                    if existing.status != "confirmed":
+                        existing.status = "confirmed"
+                        existing.checked_at = now
+                        existing.confirmed_at = now
+                else:
+                    session.add(SubscriptionEvent(
+                        campaign_id=c.id,
+                        user_id=user.id,
+                        channel_id=c.channel_id,
+                        status="confirmed",
+                        checked_at=now,
+                        confirmed_at=now,
+                    ))
 
-    await track(
-        "subscription_confirmed",
-        telegram_id=callback.from_user.id,
-        payload={"campaign_id": campaign_id},
-    )
+                # Считаем только первое подтверждение
+                if not existing:
+                    cmp_row = (await session.execute(
+                        select(SubscriptionCampaign).where(SubscriptionCampaign.id == c.id)
+                    )).scalar_one_or_none()
+                    if cmp_row:
+                        cmp_row.confirmed_subscribers += 1
 
-    try:
-        await callback.message.edit_text(
-            "🎉 <b>Спасибо за подписку!</b>\n\n"
-            "Теперь тебе доступны все функции бота.\n\n"
-            "📸 Отправь фото — получишь смешной AI-профиль.",
+            await session.commit()
+
+    # Все подписаны?
+    if not not_subscribed:
+        await track(
+            "subscription_confirmed",
+            telegram_id=callback.from_user.id,
+            payload={"campaigns_count": len(campaigns)},
         )
-    except Exception:
-        pass
 
-    await callback.message.answer(
-        "👋 <b>Добро пожаловать!</b>\n\n"
-        "Отправь мне фотографию — и я сделаю тебе смешной игровой профиль.\n\n"
-        "📸 <b>Просто отправь фото прямо в чат!</b>\n\n"
-        "Кнопки внизу — профиль, поиск игроков, сравнение с друзьями, "
-        "настройки и другое.",
-        reply_markup=main_menu_kb(),
-    )
+        try:
+            await callback.message.edit_text(
+                "🎉 <b>Спасибо за подписки!</b>\n\n"
+                "Теперь тебе доступны все функции бота.\n\n"
+                "📸 Отправь фото — получишь смешной AI-профиль."
+            )
+        except Exception:
+            pass
+
+        await callback.message.answer(
+            "👋 <b>Добро пожаловать!</b>\n\n"
+            "Отправь мне фотографию — и я сделаю тебе смешной игровой профиль.\n\n"
+            "📸 <b>Просто отправь фото прямо в чат!</b>",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    # Не все подписаны
+    missing_lines = [
+        "❌ <b>Ты ещё не подписан на:</b>\n"
+    ]
+    for c in not_subscribed:
+        url = _build_channel_url(c)
+        label = c.name or c.channel_username or "Канал"
+        missing_lines.append(f"• <b>{label}</b>\n  👉 {url}")
+
+    missing_lines.append("\nПодпишись и нажми «✅ Я подписался на все» ещё раз.")
+
+    kb = _build_multi_gate_kb(campaigns)
+    try:
+        await callback.message.edit_text("\n".join(missing_lines), reply_markup=kb)
+    except Exception:
+        await callback.message.answer("\n".join(missing_lines), reply_markup=kb)

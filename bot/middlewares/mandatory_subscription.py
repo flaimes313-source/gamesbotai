@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, List
 
 from aiogram import BaseMiddleware
 from aiogram.types import (
@@ -24,75 +24,69 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Что пропускаем всегда, даже без подписки
-# ============================================================
 PASS_THROUGH_COMMANDS = ("/start", "/help", "/cancel")
 PASS_THROUGH_CALLBACKS = ("sub_check_",)
+
+MAX_CAMPAIGNS = 3
 
 
 # ============================================================
 # Утилиты
 # ============================================================
 def _build_channel_url(campaign: SubscriptionCampaign) -> str:
-    """Возвращает валидный https://t.me/... URL для кнопки."""
     url = campaign.channel_link
     if url and url.startswith("http"):
         return url
     if campaign.channel_username:
         username = campaign.channel_username.lstrip("@")
         return f"https://t.me/{username}"
-    # Крайний фолбэк
     return "https://t.me/telegram"
 
 
-def _build_gate_kb(campaign: SubscriptionCampaign) -> InlineKeyboardMarkup:
-    url = _build_channel_url(campaign)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Подписаться", url=url)],
-            [InlineKeyboardButton(
-                text="✅ Я подписался",
-                callback_data=f"sub_check_{campaign.id}",
-            )],
-        ]
-    )
+def _build_multi_gate_kb(campaigns: List[SubscriptionCampaign]) -> InlineKeyboardMarkup:
+    """Кнопки «Подписаться» для каждого канала + «Я подписался»."""
+    rows = []
+    for c in campaigns:
+        url = _build_channel_url(c)
+        label = c.name or c.channel_username or "Канал"
+        # Обрезаем длинные названия
+        if len(label) > 28:
+            label = label[:26] + "…"
+        rows.append([InlineKeyboardButton(text=f"📢 {label}", url=url)])
+
+    # Кнопка «Я подписался» — общая (для всех кампаний)
+    rows.append([InlineKeyboardButton(
+        text="✅ Я подписался на все",
+        callback_data="sub_check_all",
+    )])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _build_gate_text(campaign: SubscriptionCampaign) -> str:
-    url = _build_channel_url(campaign)
-    return (
-        "🔒 <b>Требуется подписка</b>\n\n"
-        "Чтобы пользоваться ботом, подпишись на канал:\n"
-        f"👉 {url}\n\n"
-        "После подписки нажми «✅ Я подписался»."
-    )
+def _build_multi_gate_text(campaigns: List[SubscriptionCampaign]) -> str:
+    lines = [
+        "🔒 <b>Требуется подписка</b>\n",
+        f"Чтобы пользоваться ботом, подпишись на {len(campaigns)} канал(а):\n",
+    ]
+    for i, c in enumerate(campaigns, 1):
+        url = _build_channel_url(c)
+        label = c.name or c.channel_username or "Канал"
+        lines.append(f"{i}. <b>{label}</b>\n   👉 {url}")
+
+    lines.append("\nПосле подписки на все каналы нажми «✅ Я подписался на все».")
+    return "\n".join(lines)
 
 
 # ============================================================
 # Middleware
 # ============================================================
 class MandatorySubscriptionMiddleware(BaseMiddleware):
-    """
-    Hard gate: пока пользователь не подпишется на активный канал,
-    любое действие (кнопка меню, отправка фото) блокируется
-    экраном подписки.
-
-    Пропускаются:
-    - Админы
-    - Whitelist
-    - PRO-подписчики
-    - /start, /help, /cancel
-    - Callback-и проверки подписки (sub_check_*)
-    """
-
     async def __call__(
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        # --- Флаг выключен → всё работает ---
         try:
             flag_on = await is_enabled("mandatory_subscriptions_enabled", default=False)
         except Exception:
@@ -106,7 +100,7 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
         if from_user is None:
             return await handler(event, data)
 
-        # --- Пропуски ---
+        # Пропуски
         if from_user.id in config.ADMIN_IDS:
             return await handler(event, data)
 
@@ -122,7 +116,7 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
         except Exception:
             logger.exception("[GATE] premium check failed")
 
-        # --- Pass-through команды и callback-и ---
+        # Pass-through
         if isinstance(event, Message):
             text = (event.text or "").strip()
             first = text.split()[0] if text else ""
@@ -134,89 +128,127 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
             if any(data_str.startswith(p) for p in PASS_THROUGH_CALLBACKS):
                 return await handler(event, data)
 
-        # --- Активная кампания ---
+        # --- Активные кампании (до 3) ---
+        campaigns: List[SubscriptionCampaign] = []
+        user_row = None
         try:
             async with async_session() as session:
-                campaign = (await session.execute(
+                campaigns = list((await session.execute(
                     select(SubscriptionCampaign)
                     .where(SubscriptionCampaign.is_active.is_(True))
                     .where(SubscriptionCampaign.channel_id.isnot(None))
-                    .limit(1)
-                )).scalar_one_or_none()
+                    .order_by(SubscriptionCampaign.id.asc())
+                    .limit(MAX_CAMPAIGNS)
+                )).scalars().all())
 
-                if campaign is None:
-                    logger.info("[GATE] no active campaign — pass through")
+                if not campaigns:
+                    logger.info("[GATE] no active campaigns — pass through")
                     return await handler(event, data)
 
                 user_row = (await session.execute(
                     select(User).where(User.telegram_id == from_user.id)
                 )).scalar_one_or_none()
 
-                # Юзера ещё нет в БД — пропускаем, пусть /start создаст
                 if user_row is None:
                     logger.info(f"[GATE] user {from_user.id} not in DB — pass through")
                     return await handler(event, data)
 
-                # Уже подтверждено?
-                existing = (await session.execute(
-                    select(SubscriptionEvent)
-                    .where(SubscriptionEvent.campaign_id == campaign.id)
+                # Сколько кампаний уже подтверждено?
+                confirmed_rows = (await session.execute(
+                    select(SubscriptionEvent.campaign_id)
                     .where(SubscriptionEvent.user_id == user_row.id)
                     .where(SubscriptionEvent.status == "confirmed")
-                )).scalar_one_or_none()
+                    .where(SubscriptionEvent.campaign_id.in_([c.id for c in campaigns]))
+                )).scalars().all()
 
-                if existing:
-                    logger.info(f"[GATE] user {from_user.id} already confirmed")
+                confirmed_ids = set(confirmed_rows)
+
+                # Все подтверждены?
+                if len(confirmed_ids) == len(campaigns):
                     return await handler(event, data)
+
+                # Есть неподтверждённые кампании — продолжаем проверку
+                unconfirmed = [c for c in campaigns if c.id not in confirmed_ids]
+
         except Exception:
             logger.exception("[GATE] campaign check failed")
             return await handler(event, data)
 
         # --- Живая проверка через Telegram API ---
         bot = data.get("bot")
-        ok = False
-        if bot is not None:
-            try:
-                ok = await is_subscribed(bot, from_user.id, campaign.channel_id)
-            except Exception:
-                logger.exception("[GATE] is_subscribed failed")
-                ok = False
+        all_subscribed = True
+        subscribed_ids: set = set()
+        not_subscribed: List[SubscriptionCampaign] = []
 
-        if ok:
-            # Сохраняем подтверждение и пропускаем
+        for c in unconfirmed:
+            ok = False
+            if bot is not None:
+                try:
+                    ok = await is_subscribed(bot, from_user.id, c.channel_id)
+                except Exception:
+                    logger.exception(f"[GATE] is_subscribed failed for {c.id}")
+                    ok = False
+
+            if ok:
+                subscribed_ids.add(c.id)
+            else:
+                all_subscribed = False
+                not_subscribed.append(c)
+
+        # Сохраняем подтверждённые
+        if subscribed_ids:
             try:
                 async with async_session() as session:
-                    user_row = (await session.execute(
+                    user_row2 = (await session.execute(
                         select(User).where(User.telegram_id == from_user.id)
                     )).scalar_one_or_none()
-                    if user_row:
+                    if user_row2:
                         now = datetime.now(timezone.utc)
-                        session.add(SubscriptionEvent(
-                            campaign_id=campaign.id,
-                            user_id=user_row.id,
-                            channel_id=campaign.channel_id,
-                            status="confirmed",
-                            checked_at=now,
-                            confirmed_at=now,
-                        ))
+                        for cid in subscribed_ids:
+                            # Проверяем, нет ли уже записи
+                            existing = (await session.execute(
+                                select(SubscriptionEvent)
+                                .where(SubscriptionEvent.campaign_id == cid)
+                                .where(SubscriptionEvent.user_id == user_row2.id)
+                            )).scalar_one_or_none()
+                            if existing:
+                                existing.status = "confirmed"
+                                existing.checked_at = now
+                                existing.confirmed_at = now
+                            else:
+                                channel_id = next(
+                                    (c.channel_id for c in campaigns if c.id == cid), None
+                                )
+                                session.add(SubscriptionEvent(
+                                    campaign_id=cid,
+                                    user_id=user_row2.id,
+                                    channel_id=channel_id,
+                                    status="confirmed",
+                                    checked_at=now,
+                                    confirmed_at=now,
+                                ))
                         await session.commit()
             except Exception:
-                logger.exception("[GATE] failed to save confirmation")
+                logger.exception("[GATE] failed to save confirmations")
 
+        # Все подписаны?
+        if all_subscribed:
             try:
                 await track(
                     "subscription_confirmed",
                     telegram_id=from_user.id,
-                    payload={"campaign_id": campaign.id, "source": "middleware"},
+                    payload={"campaigns_count": len(campaigns), "source": "middleware"},
                 )
             except Exception:
                 pass
-
             return await handler(event, data)
 
-        # --- НЕ подписан → показать экран ---
-        logger.info(f"[GATE] user={from_user.id} not subscribed — showing gate")
-        await self._send_gate(event, campaign, from_user.id)
+        # Не все подписаны — показываем экран
+        logger.info(
+            f"[GATE] user={from_user.id} not fully subscribed "
+            f"({len(not_subscribed)} of {len(campaigns)} missing)"
+        )
+        await self._send_gate(event, campaigns, from_user.id)
         return None
 
     # --------------------------------------------------------
@@ -225,17 +257,17 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
     async def _send_gate(
         self,
         event: TelegramObject,
-        campaign: SubscriptionCampaign,
+        campaigns: List[SubscriptionCampaign],
         user_id: int,
     ) -> None:
-        kb = _build_gate_kb(campaign)
-        text = _build_gate_text(campaign)
+        kb = _build_multi_gate_kb(campaigns)
+        text = _build_multi_gate_text(campaigns)
 
         sent = False
 
         if isinstance(event, CallbackQuery):
             try:
-                await event.answer("❌ Сначала подпишись на канал", show_alert=True)
+                await event.answer("❌ Сначала подпишись на все каналы", show_alert=True)
             except Exception as e:
                 logger.warning(f"[GATE] callback.answer failed: {e}")
 
@@ -254,9 +286,6 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
             except Exception as e:
                 logger.exception(f"[GATE] message send failed: {e}")
 
-        else:
-            logger.error(f"[GATE] unexpected event type: {type(event)}")
-
         if not sent:
             logger.error(f"[GATE] FAILED to deliver gate to user {user_id}")
 
@@ -264,7 +293,10 @@ class MandatorySubscriptionMiddleware(BaseMiddleware):
             await track(
                 "subscription_gate_shown",
                 telegram_id=user_id,
-                payload={"campaign_id": campaign.id, "sent": sent},
+                payload={
+                    "campaigns": [c.id for c in campaigns],
+                    "sent": sent,
+                },
             )
         except Exception:
             pass
