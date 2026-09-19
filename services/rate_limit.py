@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
@@ -13,24 +13,17 @@ logger = get_logger(__name__)
 
 
 # Суточные лимиты AI-запросов
-FREE_DAILY_LIMIT = 5
+FREE_DAILY_LIMIT = 1     # ← было 5, стало 1
 PRO_DAILY_LIMIT = 50
-ADMIN_DAILY_LIMIT = 999999  # фактически безлимит
+ADMIN_DAILY_LIMIT = 999999
 
 
 def _today_start() -> datetime:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 async def _get_limit(telegram_id: int) -> int:
-    """
-    Определяет лимит для пользователя:
-    - админ → безлимит
-    - whitelist → безлимит
-    - PRO → 50
-    - иначе → 5
-    """
     if telegram_id in config.ADMIN_IDS:
         return ADMIN_DAILY_LIMIT
 
@@ -50,7 +43,7 @@ async def check_and_increment(telegram_id: int, user_id: int) -> tuple[bool, int
     """
     limit = await _get_limit(telegram_id)
 
-    # Админы и whitelist: без учёта в БД
+    # Админы и whitelist — без учёта
     if limit >= ADMIN_DAILY_LIMIT:
         return True, 0, limit
 

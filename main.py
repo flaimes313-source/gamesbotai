@@ -52,6 +52,9 @@ try:
     _log_boot("Importing db_cleanup...")
     from services.notifications.db_cleanup import db_cleanup_loop
 
+    _log_boot("Importing premium_reminder...")
+    from services.notifications.premium_reminder import premium_reminder_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -129,10 +132,7 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     logger.info("Registering middlewares...")
-    # Глобальный выключатель — на все апдейты
     dp.update.middleware(BotEnabledMiddleware())
-
-    # Гейт подписок — на message и callback_query
     dp.message.middleware(MandatorySubscriptionMiddleware())
     dp.callback_query.middleware(MandatorySubscriptionMiddleware())
 
@@ -159,6 +159,12 @@ async def main() -> None:
         asyncio.create_task(db_cleanup_loop())
     except Exception:
         logger.exception("Failed to start DB cleanup loop")
+
+    logger.info("Starting premium reminder loop...")
+    try:
+        asyncio.create_task(premium_reminder_loop(bot))
+    except Exception:
+        logger.exception("Failed to start premium reminder loop")
 
     logger.info("Polling started.")
     try:

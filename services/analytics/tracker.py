@@ -10,8 +10,7 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# Белый список всех событий проекта.
-# Неизвестные имена логируются как WARNING, но всё равно пишутся.
+# Белый список всех событий проекта
 # ============================================================
 EVENT_NAMES = {
     # Пользовательские
@@ -42,11 +41,18 @@ EVENT_NAMES = {
 
     # Монетизация
     "pro_purchase",
+    "pro_gift_sent",
+    "pro_gift_received",
     "subscription_offer_shown",
     "subscription_confirmed",
     "subscription_gate_shown",
     "ad_shown",
     "ad_clicked",
+
+    # PRO напоминания
+    "premium_reminder_3d",
+    "premium_reminder_1d",
+    "premium_expired",
 
     # Уведомления
     "daily_sent",
@@ -58,16 +64,13 @@ EVENT_NAMES = {
     "chat_ai_sent",
     "chat_ai_analyzed",
 
-    # Старые события (для совместимости, чтобы не терять историю)
+    # Старые
     "message_sent",
     "joke_sent",
     "inbox_viewed",
 }
 
 
-# ============================================================
-# Запись события
-# ============================================================
 async def track(
     name: str,
     telegram_id: Optional[int] = None,
@@ -76,10 +79,6 @@ async def track(
 ) -> None:
     """
     Записывает событие в БД.
-
-    Можно передать либо telegram_id, либо user_id.
-    Если только telegram_id — сервис сам подтянет user.id.
-
     Не падает, если что-то пошло не так — просто логирует.
     """
     if name not in EVENT_NAMES:
@@ -106,9 +105,6 @@ async def track(
         logger.exception(f"Track failed: {name}")
 
 
-# ============================================================
-# Безопасный вызов (не бросает исключений)
-# ============================================================
 async def track_safe(name: str, **kwargs: Any) -> None:
     """Обёртка, которая гарантированно не падает."""
     try:

@@ -54,7 +54,6 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 # SHARE
 # ============================================================
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
-    """Кнопки под карточкой: «Поделиться» + «Новый анализ»."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -70,7 +69,6 @@ def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
 
 
 def share_link_kb(share_url: str) -> InlineKeyboardMarkup:
-    """Кнопка «Открыть шаринг» — открывает системный Telegram-шаринг."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📤 Открыть шаринг", url=share_url)],
@@ -105,14 +103,48 @@ def settings_kb() -> InlineKeyboardMarkup:
 # ============================================================
 # PRO
 # ============================================================
-def pro_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Купить PRO (299 ₽ / 30 дней)", callback_data="buy_pro")],
-            [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="enter_promo")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")],
-        ]
-    )
+def pro_menu_kb(is_premium: bool = False) -> InlineKeyboardMarkup:
+    """
+    Меню PRO.
+    - 1 месяц: 390 ₽
+    - 6 месяцев: 1990 ₽ (-15%)
+    - 12 месяцев: 3490 ₽ (-25%)
+    """
+    rows = []
+
+    if is_premium:
+        rows.append([InlineKeyboardButton(
+            text="💎 Продлить на 1 мес (390 ₽)",
+            callback_data="buy_pro_1m",
+        )])
+    else:
+        rows.append([InlineKeyboardButton(
+            text="💎 Подключить на 1 мес (390 ₽)",
+            callback_data="buy_pro_1m",
+        )])
+
+    rows.append([InlineKeyboardButton(
+        text="🔥 6 месяцев — 1990 ₽ (-15%)",
+        callback_data="buy_pro_6m",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🚀 12 месяцев — 3490 ₽ (-25%)",
+        callback_data="buy_pro_12m",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🎟 Ввести промокод",
+        callback_data="enter_promo",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🎁 Подарить PRO другу",
+        callback_data="gift_pro",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ Назад",
+        callback_data="settings",
+    )])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ============================================================
