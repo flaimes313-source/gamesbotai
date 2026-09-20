@@ -1,6 +1,5 @@
 """
-Генератор карточек «Вайбми».
-Без эмодзи (используем геометрические маркеры).
+Генератор карточек «Вайбми» с PNG-иконками.
 """
 import io
 import logging
@@ -13,6 +12,7 @@ from services.cards.fonts_embedded import (
     get_bold_font_bytes,
     get_regular_font_bytes,
 )
+from services.cards.icons import achievement_icon, stat_icon
 from services.cards.themes import tag_for_archetype, theme_for, theme_name_for
 
 _logger = logging.getLogger(__name__)
@@ -21,9 +21,6 @@ CARD_W = 900
 CARD_H = 1200
 
 
-# ============================================================
-# Шрифты
-# ============================================================
 _FONT_REGULAR_BYTES = get_regular_font_bytes()
 _FONT_BOLD_BYTES = get_bold_font_bytes()
 
@@ -37,9 +34,6 @@ def _load_font(size: int, bold: bool = False):
         return ImageFont.load_default()
 
 
-# ============================================================
-# Утилиты рисования
-# ============================================================
 def _draw_gradient(img: Image.Image, top_color, bottom_color):
     draw = ImageDraw.Draw(img)
     for y in range(CARD_H):
@@ -93,9 +87,6 @@ def generate_card(
     username: str | None = None,
     bot_username: str | None = None,
 ) -> bytes:
-    """
-    Генерирует карточку «Вайбми».
-    """
     archetype = str(profile.get("archetype", "ТВОЙ АРХЕТИП")).upper()
     theme = theme_for(archetype)
     theme_name = theme_name_for(archetype)
@@ -107,7 +98,6 @@ def generate_card(
     _draw_gradient(img, theme["bg_top"], theme["bg_bottom"])
     img = img.convert("RGBA")
 
-    # Свечения
     _draw_glow_circle(img, (150, 150), 250, theme["accent"], alpha=40)
     _draw_glow_circle(img, (CARD_W - 100, CARD_H - 300), 280, theme["accent2"], alpha=30)
     _draw_glow_circle(img, (CARD_W - 200, 400), 150, theme["accent"], alpha=20)
@@ -120,18 +110,14 @@ def generate_card(
         fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 220),
     )
 
-    # ============================================================
-    # ШАПКА: ВАЙБМИ + тег
-    # ============================================================
+    # === ШАПКА ===
     font_brand = _load_font(24, bold=True)
     font_tag = _load_font(20, bold=True)
+    font_sub = _load_font(14)
 
     draw.text((60, 55), "ВАЙБМИ", font=font_brand, fill=theme["accent"])
-    # Подпись под брендом
-    font_sub = _load_font(14)
     draw.text((60, 85), "узнай свой вайб", font=font_sub, fill=theme["subtext"])
 
-    # Тег справа
     tag_w = _text_width(draw, hashtag, font_tag)
     draw.text(
         (CARD_W - tag_w - 60, 60),
@@ -140,9 +126,7 @@ def generate_card(
         fill=theme["accent"],
     )
 
-    # ============================================================
-    # БЛОК: МОЙ АРХЕТИП
-    # ============================================================
+    # === МОЙ АРХЕТИП ===
     font_label = _load_font(22, bold=False)
     label_text = "М О Й   А Р Х Е Т И П"
     label_w = _text_width(draw, label_text, font_label)
@@ -153,9 +137,7 @@ def generate_card(
         fill=theme["subtext"],
     )
 
-    # Архетип
     font_archetype = _load_font(52, bold=True)
-    # Уменьшаем если не влезает
     if _text_width(draw, archetype, font_archetype) > CARD_W - 200:
         font_archetype = _load_font(38, bold=True)
     if _text_width(draw, archetype, font_archetype) > CARD_W - 200:
@@ -165,7 +147,6 @@ def generate_card(
     arch_x = (CARD_W - arch_w) // 2
     arch_y = 240
 
-    # Плашка
     bbox = draw.textbbox((0, 0), archetype, font=font_archetype)
     arch_h = bbox[3] - bbox[1]
 
@@ -189,7 +170,7 @@ def generate_card(
     draw.text((arch_x, arch_y), archetype, font=font_archetype, fill=theme["text"])
 
     # ============================================================
-    # БЛОК: ХАРАКТЕРИСТИКИ
+    # ХАРАКТЕРИСТИКИ — с PNG-иконками
     # ============================================================
     scores = profile.get("scores", {}) or {}
     score_rows = [
@@ -205,6 +186,8 @@ def generate_card(
     font_score = _load_font(32, bold=True)
 
     y = 460
+    icon_size = 40
+    text_x = 60 + icon_size + 15
     bar_x = 420
     bar_w = 300
     bar_h = 18
@@ -214,21 +197,24 @@ def generate_card(
         value = int(scores.get(key, profile.get(key, 0)))
         value = max(0, min(100, value))
 
-        # Маркер (маленький ромб)
-        marker_x = 60
-        marker_y = y + 12
-        draw.polygon(
-            [
-                (marker_x + 8, marker_y),
-                (marker_x + 16, marker_y + 8),
-                (marker_x + 8, marker_y + 16),
-                (marker_x, marker_y + 8),
-            ],
-            fill=theme["accent"],
-        )
+        # Иконка PNG
+        icon = stat_icon(key, size=icon_size)
+        if icon is not None:
+            img.alpha_composite(icon, (60, y + 4))
+        else:
+            # Фолбэк — ромб
+            draw.polygon(
+                [
+                    (60 + 16, y + 6),
+                    (60 + 32, y + 22),
+                    (60 + 16, y + 38),
+                    (60, y + 22),
+                ],
+                fill=theme["accent"],
+            )
 
         # Название
-        draw.text((90, y + 2), label, font=font_label_name, fill=theme["text"])
+        draw.text((text_x, y + 10), label, font=font_label_name, fill=theme["text"])
 
         # Фон бара
         draw.rounded_rectangle(
@@ -237,7 +223,7 @@ def generate_card(
             fill=(20, 20, 34, 255),
         )
 
-        # Заливка с градиентом
+        # Заливка
         fill_w = int(bar_w * value / 100)
         if fill_w > 0:
             for x in range(fill_w):
@@ -251,19 +237,16 @@ def generate_card(
                 )
 
         # Число
-        score_str = str(value)
         draw.text(
-            (bar_x + bar_w + 25, y),
-            score_str,
+            (bar_x + bar_w + 25, y + 8),
+            str(value),
             font=font_score,
             fill=theme["accent"],
         )
 
         y += row_step
 
-    # ============================================================
-    # ОПАСНОСТЬ
-    # ============================================================
+    # === ОПАСНОСТЬ ===
     y += 10
     danger = int(profile.get("danger_level", 0))
 
@@ -302,9 +285,7 @@ def generate_card(
         fill=danger_color,
     )
 
-    # ============================================================
-    # ЦИТАТА / ВАЙБ
-    # ============================================================
+    # === ЦИТАТА ===
     y = plate_y2 + 25
 
     vibe = (
@@ -335,49 +316,55 @@ def generate_card(
     )
     img.alpha_composite(overlay)
 
-    # Полоска слева цитаты
     draw.rectangle(
         [(qx1 + 3, qy1 + 15), (qx1 + 5, qy2 - 15)],
         fill=theme["accent"],
     )
 
-    # Текст цитаты
     text_y = qy1 + quote_pad + 5
     for line in quote_lines:
         draw.text((qx1 + quote_pad + 20, text_y), line, font=font_quote, fill=theme["text"])
         text_y += line_height
 
     # ============================================================
-    # ДОСТИЖЕНИЯ
+    # ДОСТИЖЕНИЯ — с PNG-иконками
     # ============================================================
     achievements = profile.get("achievements", [])
     if achievements:
-        achi_y = qy2 + 20
-        achi_text = "   ·   ".join(achievements[:5])
-        font_achi = _load_font(20)
-        aw = _text_width(draw, achi_text, font_achi)
-        draw.text(
-            ((CARD_W - aw) // 2, achi_y),
-            achi_text,
-            font=font_achi,
-            fill=(255, 209, 102),
-        )
+        achi_y = qy2 + 25
 
-    # ============================================================
-    # ФУТЕР (без username!)
-    # ============================================================
+        # Иконки — по коду достижения
+        font_achi_label = _load_font(18, bold=True)
+
+        # Считаем общую ширину для центрирования
+        icons_with_size = 32
+        gap = 22
+        total_w = 0
+        pairs = []
+        for code in achievements[:5]:
+            icon = achievement_icon(code, size=icons_with_size)
+            if icon is None:
+                continue
+            pairs.append((code, icon))
+            total_w += icons_with_size + gap
+
+        if pairs:
+            total_w -= gap  # убираем последний gap
+            start_x = (CARD_W - total_w) // 2
+
+            for code, icon in pairs:
+                img.alpha_composite(icon, (start_x, achi_y))
+                start_x += icons_with_size + gap
+
+    # === ФУТЕР ===
     footer_y = CARD_H - 70
 
-    # Слоган слева
-    slogan = "ВАЙБМИ"
     font_slogan = _load_font(20, bold=True)
-    draw.text((60, footer_y), slogan, font=font_slogan, fill=theme["accent"])
+    draw.text((60, footer_y), "ВАЙБМИ", font=font_slogan, fill=theme["accent"])
 
-    slogan_sub = "узнай свой вайб"
     font_slogan_sub = _load_font(13)
-    draw.text((60, footer_y + 28), slogan_sub, font=font_slogan_sub, fill=theme["subtext"])
+    draw.text((60, footer_y + 28), "узнай свой вайб", font=font_slogan_sub, fill=theme["subtext"])
 
-    # Bot username справа
     if bot_username:
         bot_str = f"@{bot_username}"
         font_bot = _load_font(18)
@@ -389,13 +376,11 @@ def generate_card(
             fill=theme["subtext"],
         )
 
-    # Нижняя полоса
     draw.rectangle(
         [(0, CARD_H - 4), (CARD_W, CARD_H)],
         fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 255),
     )
 
-    # === Сохраняем ===
     buf = BytesIO()
     img.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()

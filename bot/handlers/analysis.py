@@ -14,7 +14,7 @@ from bot.handlers.start import get_or_create_user
 from bot.keyboards.main import share_kb
 from config import config
 from database.connection import async_session
-from database.models import PhotoAnalysis, User
+from database.models import PhotoAnalysis, Profile, User, UserAchievement
 from services.achievements import unlock_achievement
 from services.analytics.tracker import track
 from services.analysis.photo_analysis import analyze_photo
@@ -71,34 +71,22 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
 
 
 # ============================================================
-# Достижения для карточки
+# Коды достижений для карточки
 # ============================================================
 async def _get_achievement_badges(user_id: int) -> list:
-    from database.models import UserAchievement
-
+    """
+    Возвращает список кодов достижений (до 3 последних).
+    Иконки подтянет generator.py через services/cards/icons.py.
+    """
     async with async_session() as session:
         rows = (await session.execute(
             select(UserAchievement)
             .where(UserAchievement.user_id == user_id)
             .order_by(UserAchievement.unlocked_at.desc())
-            .limit(5)
+            .limit(3)
         )).scalars().all()
 
-    emoji_map = {
-        "first_photo": "📸",
-        "first_share": "📤",
-        "friend_joined": "👥",
-        "first_test": "🧪",
-        "five_tests": "🎓",
-        "chaos_90": "🧨",
-        "charisma_90": "✨",
-        "five_analyses": "🔥",
-        "first_match": "🎯",
-        "ten_messages": "💬",
-        "pro_first": "💎",
-    }
-
-    return [f"{emoji_map.get(a.achievement_code, '🏆')}×{i + 1}" for i, a in enumerate(rows[:3])]
+    return [a.achievement_code for a in rows]
 
 
 # ============================================================
@@ -252,11 +240,15 @@ async def handle_photo(message: Message):
 
     # Генерируем карточку с достижениями
     try:
-        achievements_badges = await _get_achievement_badges(user.id)
+        achievements_codes = await _get_achievement_badges(user.id)
         analysis_with_badges = dict(analysis)
-        analysis_with_badges["achievements"] = achievements_badges
+        analysis_with_badges["achievements"] = achievements_codes
 
-        card_bytes = generate_card(analysis_with_badges, message.from_user.username, bot_username)
+        card_bytes = generate_card(
+            analysis_with_badges,
+            message.from_user.username,
+            bot_username,
+        )
         photo_input = BufferedInputFile(card_bytes, filename="card.png")
         await message.answer_photo(
             photo_input,
@@ -290,7 +282,6 @@ async def cb_do_share(callback: CallbackQuery):
             await callback.message.answer("Сначала отправь фото!")
             return
 
-        from database.models import Profile
         profile = (await session.execute(
             select(Profile)
             .where(Profile.user_id == user.id)
