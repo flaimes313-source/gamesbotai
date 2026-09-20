@@ -35,7 +35,6 @@ class User(Base):
     first_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     language: Mapped[str] = mapped_column(String(8), default="ru")
 
-    # Таймзона пользователя (название IANA)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
     timezone_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -173,7 +172,7 @@ class Match(Base):
 
 
 # ============================================================
-# CHATS (диалоги)
+# CHATS
 # ============================================================
 class Chat(Base):
     __tablename__ = "chats"
@@ -220,7 +219,7 @@ class Message(Base):
 
 
 # ============================================================
-# CHAT REPORTS (жалобы)
+# CHAT REPORTS
 # ============================================================
 class ChatReport(Base):
     __tablename__ = "chat_reports"
@@ -423,7 +422,7 @@ class FeatureFlag(Base):
 
 
 # ============================================================
-# EVENTS (аналитика)
+# EVENTS
 # ============================================================
 class Event(Base):
     __tablename__ = "events"
@@ -443,7 +442,7 @@ class Event(Base):
 
 
 # ============================================================
-# EXPERIMENTS (A/B-тесты промтов)
+# EXPERIMENTS
 # ============================================================
 class ExperimentAssignment(Base):
     __tablename__ = "experiment_assignments"
@@ -460,7 +459,7 @@ class ExperimentAssignment(Base):
 
 
 # ============================================================
-# AI USAGE (rate limiting)
+# AI USAGE
 # ============================================================
 class AIUsage(Base):
     __tablename__ = "ai_usage"
@@ -474,4 +473,75 @@ class AIUsage(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "day", name="uq_ai_usage_user_day"),
+    )
+
+
+# ============================================================
+# ENGAGEMENT (вовлечение)
+# ============================================================
+class UserEngagement(Base):
+    __tablename__ = "user_engagement"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+
+    # Стрик
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    max_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_visit_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Очки и уровень
+    total_points: Mapped[int] = mapped_column(Integer, default=0)
+    level: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Коллекция архетипов (JSON: {archetype: count})
+    archetypes_collected: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
+
+    # Активность
+    total_analyses: Mapped[int] = mapped_column(Integer, default=0)
+    total_messages: Mapped[int] = mapped_column(Integer, default=0)
+    total_tests: Mapped[int] = mapped_column(Integer, default=0)
+    total_shares: Mapped[int] = mapped_column(Integer, default=0)
+    total_referrals: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DailyChallenge(Base):
+    __tablename__ = "daily_challenges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+
+    task_type: Mapped[str] = mapped_column(String(32))
+    target_value: Mapped[int] = mapped_column(Integer, default=1)
+    reward_points: Mapped[int] = mapped_column(Integer, default=50)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserChallenge(Base):
+    __tablename__ = "user_challenges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    challenge_id: Mapped[int] = mapped_column(ForeignKey("daily_challenges.id", ondelete="CASCADE"), index=True)
+
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="in_progress")
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "challenge_id", name="uq_user_challenge"),
     )

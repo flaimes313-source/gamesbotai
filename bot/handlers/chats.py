@@ -42,6 +42,9 @@ def _is_waiting_chat_reply(message: Message) -> bool:
     return PENDING_CHAT_REPLY.get(message.from_user.id) is not None
 
 
+# ============================================================
+# Reply-кнопка «💬 Мои чаты»
+# ============================================================
 @router.message(F.text == "💬 Мои чаты")
 async def show_chats_from_menu(message: Message):
     await _send_chat_list(message, message.from_user.id)
@@ -109,6 +112,9 @@ async def _send_chat_list(message_or_callback, telegram_id: int) -> None:
     await _reply(message_or_callback, text, kb)
 
 
+# ============================================================
+# Открытие чата
+# ============================================================
 @router.callback_query(F.data.startswith("chat_open_"))
 async def cb_chat_open(callback: CallbackQuery):
     await callback.answer()
@@ -174,6 +180,9 @@ async def _open_chat(message_or_callback, telegram_id: int, chat_id: int) -> Non
     await _reply(message_or_callback, text, kb)
 
 
+# ============================================================
+# Ответ
+# ============================================================
 @router.callback_query(F.data.startswith("chat_reply_"))
 async def cb_chat_reply(callback: CallbackQuery):
     await callback.answer()
@@ -206,6 +215,9 @@ async def cb_chat_reply(callback: CallbackQuery):
     )
 
 
+# ============================================================
+# AI: Помоги ответить
+# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_reply_"))
 async def cb_chat_ai_reply(callback: CallbackQuery):
     await callback.answer("Генерирую варианты...")
@@ -334,6 +346,19 @@ async def cb_chat_ai_send(callback: CallbackQuery):
 
     if result:
         await track("chat_ai_sent", telegram_id=callback.from_user.id, payload={"chat_id": chat_id})
+
+        # Вовлечение: сообщение через AI
+        try:
+            async with async_session() as session:
+                me = (await session.execute(
+                    select(User).where(User.telegram_id == callback.from_user.id)
+                )).scalar_one_or_none()
+            if me:
+                from services.engagement.service import on_message_sent
+                await on_message_sent(me.id)
+        except Exception:
+            logger.exception("Engagement on_message_sent failed")
+
         await callback.message.answer(
             f"✅ Отправлено:\n\n<i>{msg_text}</i>",
             reply_markup=InlineKeyboardMarkup(
@@ -346,6 +371,9 @@ async def cb_chat_ai_send(callback: CallbackQuery):
         await callback.message.answer("❌ Не удалось отправить.")
 
 
+# ============================================================
+# AI: Анализ переписки
+# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_analyze_"))
 async def cb_chat_ai_analyze(callback: CallbackQuery):
     await callback.answer("Анализирую...")
@@ -430,6 +458,9 @@ async def cb_chat_ai_analyze(callback: CallbackQuery):
     )
 
 
+# ============================================================
+# AI: Заглушка для не-PRO
+# ============================================================
 @router.callback_query(F.data.startswith("chat_ai_locked_"))
 async def cb_chat_ai_locked(callback: CallbackQuery):
     await callback.answer()
@@ -447,6 +478,9 @@ async def cb_chat_ai_locked(callback: CallbackQuery):
     )
 
 
+# ============================================================
+# Жалоба
+# ============================================================
 @router.callback_query(F.data.startswith("chat_report_"))
 async def cb_chat_report(callback: CallbackQuery):
     await callback.answer()
@@ -514,6 +548,9 @@ async def cb_chat_report(callback: CallbackQuery):
             pass
 
 
+# ============================================================
+# /cancel
+# ============================================================
 @router.message(F.text == "/cancel")
 async def cmd_cancel(message: Message):
     if PENDING_CHAT_REPLY.pop(message.from_user.id, None) is not None:
@@ -522,6 +559,9 @@ async def cmd_cancel(message: Message):
         await message.answer("Нечего отменять.")
 
 
+# ============================================================
+# Catch-all
+# ============================================================
 @router.message(F.text & ~F.text.startswith("/"), _is_waiting_chat_reply)
 async def handle_chat_reply(message: Message):
     chat_id = PENDING_CHAT_REPLY.pop(message.from_user.id, None)
@@ -542,7 +582,20 @@ async def handle_chat_reply(message: Message):
     )
 
     if result:
-        await track("chat_message_sent", telegram_id=message.from_user.id, payload={"chat_id": chat_id})
+        await track("chat_message_sent", telegram_id=message.from_user.id, payload={"type": "custom"})
+
+        # Вовлечение: сообщение
+        try:
+            async with async_session() as session:
+                me = (await session.execute(
+                    select(User).where(User.telegram_id == message.from_user.id)
+                )).scalar_one_or_none()
+            if me:
+                from services.engagement.service import on_message_sent
+                await on_message_sent(me.id)
+        except Exception:
+            logger.exception("Engagement on_message_sent failed")
+
         await message.answer(
             "✅ Сообщение отправлено.",
             reply_markup=InlineKeyboardMarkup(

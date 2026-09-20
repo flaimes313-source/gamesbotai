@@ -334,6 +334,35 @@ campaigns: id, name, status, text, image_file_id,
   price_per_impression, clicks, sent_count, started_at, ended_at
 events: id, campaign_id, user_id, shown_at, clicked_at
 
+markdown
+
+**user_engagement** (вовлечение)
+
+id, user_id (unique),
+current_streak, max_streak, last_visit_date,
+total_points, level,
+archetypes_collected (JSON),
+total_analyses, total_messages, total_tests, total_shares, total_referrals,
+created_at, updated_at
+text
+
+
+**daily_challenges**
+
+id, date (unique), title, description,
+task_type, target_value, reward_points,
+created_at
+text
+
+
+**user_challenges**
+
+id, user_id, challenge_id, progress, status, completed_at, created_at
+UNIQUE (user_id, challenge_id)
+text
+
+
+
 4. AI-СЛОЙ (GigaChat)
 Провайдер
 
@@ -475,6 +504,59 @@ data/fonts/ — NotoSans-Regular.ttf, NotoSans-Bold.ttf (в git).
     Caption: результат + призыв + ссылка. Reply-кнопки share_kb.
 
     Хук maybe_send_ad.
+
+    ## 5.1. ВОВЛЕЧЕНИЕ (engagement)
+
+**`services/engagement/`** — сервисы вовлечения:
+
+- **`points.py`** — очки + 20 уровней:
+  - Логика: `add_points(user_id, action, multiplier)`
+  - Таблица `LEVELS` — 20 уровней с титулами
+  - `level_for_points`, `title_for_level`, `points_to_next_level`
+  - Награды: daily_login 5, photo_analysis 15, new_archetype 30, test_complete 20, first_message 10, share 5, invite_friend 50, challenge_complete 50, streak_bonus × N, first_login 10
+
+- **`streaks.py`** — серии дней:
+  - `update_streak(user_id)` — вызывается при /start
+  - Milestones: 3, 7, 14, 30, 100 дней → достижения streak_3, streak_7 и т.д.
+  - Стрик сбрасывается при пропуске дня
+
+- **`archetypes.py`** — коллекция архетипов:
+  - `add_archetype(user_id, archetype)` — добавляет, возвращает is_new
+  - `get_collection`, `get_collection_stats`
+  - MAX_ARCHETYPES = 20
+
+- **`challenges.py`** — ежедневный челлендж:
+  - `CHALLENGE_POOL` — 7 типов заданий
+  - `get_or_create_today_challenge()` — создаёт один раз в день
+  - `increment_progress(user_id, task_type, amount)` — увеличивает прогресс
+  - Награда: challenge_complete 50 очков
+
+- **`service.py`** — единый API:
+  - `on_user_visit(user_id)` — стрик
+  - `on_photo_analyzed(user_id, archetype)` — анализ + архетип + челлендж
+  - `on_test_completed(user_id)`
+  - `on_message_sent(user_id)`
+  - `on_share(user_id)`
+  - `on_referral(user_id)`
+  - `on_compare(user_id)`
+
+**Интеграция в существующие хендлеры:**
+- `start.py` → `on_user_visit`, `on_referral`
+- `analysis.py` → `on_photo_analyzed`, `on_share`
+- `tests.py` → `on_test_completed`
+- `messaging.py`, `chats.py` → `on_message_sent`
+- `compare.py` → `on_compare`
+
+**Очки (POINTS):**
+first_login: 10, daily_login: 5, streak_bonus: ×N,
+photo_analysis: 15, new_archetype: 30,
+test_complete: 20, first_message: 10,
+share: 5, invite_friend: 50,
+challenge_complete: 50
+text
+
+
+**Уровни (LEVELS):** 20 уровней от «Новичок» (0 очков) до «ЛЕГЕНДА ВАЙБМИ» (55000).
 
 6. СОБЫТИЯ (EVENT_NAMES)
 
@@ -890,6 +972,15 @@ Share	5
     Кнопка «🏅 Уровень» (в профиле)
 
     Публикация топов раз в неделю
+
+    ### Этап 1-2 (БД + сервисы) — ✅ ЗАВЕРШЕН
+- user_engagement, daily_challenges, user_challenges — созданы
+- services/engagement/ — 5 файлов
+- Интеграция в хендлеры — сделана
+
+### Этап 3-5 (Хендлеры + UI) — В РАБОТЕ
+- Кнопки «🎯 Челлендж дня», «📊 Моя статистика»
+- Публикация топов
 
 17. КАК ВОССТАНОВИТЬ КОНТЕКСТ В НОВОМ ЧАТЕ
 

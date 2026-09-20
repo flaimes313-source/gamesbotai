@@ -153,6 +153,14 @@ async def handle_photo(message: Message):
         session.add(profile)
         await session.commit()
 
+    # Вовлечение: анализ + новый архетип + челлендж
+    engagement_result = {}
+    try:
+        from services.engagement.service import on_photo_analyzed
+        engagement_result = await on_photo_analyzed(user.id, analysis.get("archetype", ""))
+    except Exception:
+        logger.exception("Engagement on_photo_analyzed failed")
+
     # Достижения
     try:
         await unlock_achievement(user.id, "first_photo")
@@ -202,6 +210,10 @@ async def handle_photo(message: Message):
             f"👉 <b>Проверь себя:</b> {share_url}"
         )
 
+    # Бейдж «новый архетип»
+    if engagement_result.get("is_new_archetype"):
+        full_caption += "\n\n✨ <b>Новый архетип в коллекции!</b>"
+
     # Карточка с достижениями
     try:
         achievements_codes = await _get_achievement_badges(user.id)
@@ -222,6 +234,17 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Card generation failed")
         await message.answer(full_caption, reply_markup=share_kb(share_url))
+
+    # Уведомление о челлендже
+    challenge_result = engagement_result.get("challenge") or {}
+    if challenge_result.get("completed"):
+        try:
+            await message.answer(
+                "🎯 <b>Челлендж дня выполнен!</b>\n\n"
+                f"Награда: +{challenge_result.get('reward_points', 50)} очков"
+            )
+        except Exception:
+            pass
 
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
@@ -259,6 +282,13 @@ async def cb_do_share(callback: CallbackQuery):
     share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"
 
     await track("share_clicked", telegram_id=callback.from_user.id)
+
+    # Вовлечение: share
+    try:
+        from services.engagement.service import on_share
+        await on_share(user.id)
+    except Exception:
+        logger.exception("Engagement on_share failed")
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[

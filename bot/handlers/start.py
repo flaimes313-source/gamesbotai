@@ -83,6 +83,18 @@ async def get_or_create_user(
                     telegram_id=telegram_id,
                     payload={"referrer_id": referrer_id},
                 )
+                # Награда пригласившему
+                try:
+                    async with async_session() as session2:
+                        referrer = (await session2.execute(
+                            select(User).where(User.id == referrer_id)
+                        )).scalar_one_or_none()
+
+                    if referrer:
+                        from services.engagement.service import on_referral
+                        await on_referral(referrer.id)
+                except Exception:
+                    logger.exception("Engagement on_referral failed")
         else:
             user.last_active_at = datetime.now(timezone.utc)
             if username and user.username != username:
@@ -193,7 +205,7 @@ async def cmd_start(message: Message):
         except ValueError:
             referrer_id = None
 
-    await get_or_create_user(
+    user = await get_or_create_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
@@ -201,31 +213,26 @@ async def cmd_start(message: Message):
         language_code=message.from_user.language_code,
     )
 
+    # Вовлечение: стрик
+    try:
+        from services.engagement.service import on_user_visit
+        await on_user_visit(user.id)
+    except Exception:
+        logger.exception("Engagement on_user_visit failed")
+
     if referrer_id:
-        # Показываем карточку пригласившего
         await _send_referrer_card(message, referrer_id)
 
-        text = (
-            "🔥 <b>Вайбми — узнай свой вайб</b>\n\n"
-            "Отправь фото → получи свой архетип → поделись результатом 😂\n\n"
-            "👤 Анализ фото\n"
-            "🧨 Уникальный архетип\n"
-            "👥 Новые знакомства\n"
-            "🎯 Тесты и челленджи\n"
-            "🏆 Достижения и сравнения\n\n"
-            "Ну что, какой ты? 👀"
-        )
-    else:
-        text = (
-            "🔥 <b>Вайбми — узнай свой вайб</b>\n\n"
-            "Отправь фото → получи свой архетип → поделись результатом 😂\n\n"
-            "👤 Анализ фото\n"
-            "🧨 Уникальный архетип\n"
-            "👥 Новые знакомства\n"
-            "🎯 Тесты и челленджи\n"
-            "🏆 Достижения и сравнения\n\n"
-            "Ну что, какой ты? 👀"
-        )
+    text = (
+        "🔥 <b>Вайбми — узнай свой вайб</b>\n\n"
+        "Отправь фото → получи свой архетип → поделись результатом 😂\n\n"
+        "👤 Анализ фото\n"
+        "🧨 Уникальный архетип\n"
+        "👥 Новые знакомства\n"
+        "🎯 Тесты и челленджи\n"
+        "🏆 Достижения и сравнения\n\n"
+        "Ну что, какой ты? 👀"
+    )
 
     await message.answer(text, reply_markup=main_menu_kb())
 

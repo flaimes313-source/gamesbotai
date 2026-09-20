@@ -209,6 +209,14 @@ async def cb_send_sugg(callback: CallbackQuery):
 
     if result:
         await track("chat_message_sent", telegram_id=callback.from_user.id, payload={"type": "suggestion"})
+
+        # Вовлечение: сообщение
+        try:
+            from services.engagement.service import on_message_sent
+            await on_message_sent(me.id)
+        except Exception:
+            logger.exception("Engagement on_message_sent failed")
+
         await callback.message.answer(
             f"✅ Отправлено:\n\n<i>{msg_text}</i>",
             reply_markup=InlineKeyboardMarkup(
@@ -314,6 +322,14 @@ async def cb_jokecat(callback: CallbackQuery):
 
     if result:
         await track("joke_sent", telegram_id=callback.from_user.id, payload={"category": category})
+
+        # Вовлечение: прикол = сообщение
+        try:
+            from services.engagement.service import on_message_sent
+            await on_message_sent(me.id)
+        except Exception:
+            logger.exception("Engagement on_message_sent failed")
+
         await callback.message.answer(
             f"😂 Отправлено:\n\n{joke}",
             reply_markup=InlineKeyboardMarkup(

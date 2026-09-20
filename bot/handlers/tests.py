@@ -178,6 +178,20 @@ async def _finalize_test(callback: CallbackQuery, state: dict):
             if cnt >= 5:
                 await unlock_achievement(user.id, "five_tests")
 
+    # Вовлечение: тест + челлендж
+    if user:
+        try:
+            from services.engagement.service import on_test_completed
+            challenge_result = await on_test_completed(user.id)
+
+            if challenge_result.get("completed"):
+                await callback.message.answer(
+                    "🎯 <b>Челлендж дня выполнен!</b>\n\n"
+                    f"Награда: +{challenge_result.get('reward_points', 50)} очков"
+                )
+        except Exception:
+            logger.exception("Engagement on_test_completed failed")
+
     await track("test_completed", telegram_id=callback.from_user.id, payload={"test_id": state["test_id"]})
 
     await callback.message.answer(

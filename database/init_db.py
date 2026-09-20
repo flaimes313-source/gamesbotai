@@ -32,6 +32,12 @@ MIGRATIONS = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_chat_reports_chat_id ON chat_reports (chat_id);",
     "CREATE INDEX IF NOT EXISTS ix_chat_reports_target_id ON chat_reports (target_id);",
+
+    # Engagement
+    "CREATE INDEX IF NOT EXISTS ix_user_engagement_user_id ON user_engagement (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_daily_challenges_date ON daily_challenges (date);",
+    "CREATE INDEX IF NOT EXISTS ix_user_challenges_user_id ON user_challenges (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_user_challenges_challenge_id ON user_challenges (challenge_id);",
 ]
 
 

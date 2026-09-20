@@ -64,9 +64,11 @@ def _format_comparison(my_p: Profile, fr_p: Profile, friend_name: str = "Дру�
 
 async def _find_friend_for_comparison(session, me: User) -> Optional[User]:
     if me.referrer_id:
-        friend = (await session.execute(
-            select(User).where(User.id == me.referrer_id)
-        )).scalar_one_or_none()
+        friend = (
+            await session.execute(
+                select(User).where(User.id == me.referrer_id)
+            )
+        ).scalar_one_or_none()
         if friend:
             return friend
 
@@ -121,6 +123,13 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
                 else:
                     friend_name = friend.first_name or "друг"
                     text = _format_comparison(my_p, fr_p, friend_name)
+
+                    # Вовлечение: сравнение с другом
+                    try:
+                        from services.engagement.service import on_compare
+                        await on_compare(me.id)
+                    except Exception:
+                        logger.exception("Engagement on_compare failed")
 
     if isinstance(message_or_callback, CallbackQuery):
         await message_or_callback.message.answer(text)
@@ -183,5 +192,12 @@ async def cb_compare_with(callback: CallbackQuery):
 
         target_name = target.first_name or "Игрок"
         text = _format_comparison(my_p, their_p, target_name)
+
+    # Вовлечение: сравнение с игроком
+    try:
+        from services.engagement.service import on_compare
+        await on_compare(me.id)
+    except Exception:
+        logger.exception("Engagement on_compare failed")
 
     await callback.message.answer(text)
