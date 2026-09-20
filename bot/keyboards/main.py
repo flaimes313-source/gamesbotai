@@ -25,8 +25,12 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🏆 Достижения"),
             ],
             [
+                KeyboardButton(text="🎯 Челлендж дня"),
+                KeyboardButton(text="📊 Моя статистика"),
+            ],
+            [
+                KeyboardButton(text="🏆 Топы"),
                 KeyboardButton(text="💎 PRO"),
-                KeyboardButton(text="📤 Поделиться"),
             ],
             [
                 KeyboardButton(text="⚙️ Настройки"),
@@ -104,12 +108,6 @@ def settings_kb() -> InlineKeyboardMarkup:
 # PRO
 # ============================================================
 def pro_menu_kb(is_premium: bool = False) -> InlineKeyboardMarkup:
-    """
-    Меню PRO.
-    - 1 месяц: 390 ₽
-    - 6 месяцев: 1990 ₽ (-15%)
-    - 12 месяцев: 3490 ₽ (-25%)
-    """
     rows = []
 
     if is_premium:

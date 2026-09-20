@@ -7,6 +7,12 @@ from bot.keyboards.profile import profile_kb
 from database.connection import async_session
 from database.models import Profile, User
 from services.analytics.tracker import track
+from services.engagement.points import (
+    MAX_LEVEL,
+    get_engagement,
+    points_to_next_level,
+    title_for_level,
+)
 from utils.logging import get_logger
 
 router = Router()
@@ -30,8 +36,8 @@ async def _latest_profile(telegram_id: int) -> tuple[User | None, Profile | None
         return user, profile
 
 
-def _profile_text(user: User, profile: Profile) -> str:
-    return (
+def _profile_text(user: User, profile: Profile, engagement_line: str = "") -> str:
+    base = (
         f"👤 <b>МОЙ ПРОФИЛЬ</b>\n\n"
         f"🧨 <b>{profile.archetype}</b>\n\n"
         f"Харизма {profile.charisma}\n"
@@ -41,15 +47,16 @@ def _profile_text(user: User, profile: Profile) -> str:
         f"Интеллект {profile.intellect}\n"
         f"Креативность {profile.creativity}\n"
         f"Хаос {profile.chaos}\n\n"
-        f"⚠️ Опасность для друзей: {profile.danger_level}\n\n"
-        f"<i>{profile.vibe or ''}</i>"
+        f"⚠️ Опасность для друзей: {profile.danger_level}\n"
     )
+    if engagement_line:
+        base += f"\n{engagement_line}"
+    if profile.vibe:
+        base += f"\n\n<i>{profile.vibe}</i>"
+    return base
 
 
 async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
-    """
-    Общая логика для reply-кнопки «📤 Поделиться» и callback share_profile.
-    """
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -85,17 +92,40 @@ async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
 
 
 # ============================================================
-# REPLY-КНОПКИ (постоянное меню)
+# REPLY-КНОПКИ
 # ============================================================
 @router.message(F.text == "👤 Мой профиль")
 async def show_profile(message: Message):
     user, profile = await _latest_profile(message.from_user.id)
-    if profile is None:
+    if profile is None or user is None:
         await message.answer(
             "У тебя пока нет профиля. Отправь фото 📸 чтобы пройти первый анализ!"
         )
         return
-    await message.answer(_profile_text(user, profile), reply_markup=profile_kb())
+
+    # Engagement
+    engagement_line = ""
+    try:
+        eng = await get_engagement(user.id)
+        if eng:
+            title = title_for_level(eng.level)
+            to_next = points_to_next_level(eng.total_points, eng.level)
+
+            engagement_line = (
+                f"🏅 Уровень: <b>{eng.level}/{MAX_LEVEL}</b> — {title}\n"
+                f"⭐ Очки: <b>{eng.total_points}</b>\n"
+            )
+            if eng.current_streak > 0:
+                engagement_line += f"🔥 Стрик: <b>{eng.current_streak}</b> дней\n"
+            if to_next > 0 and eng.level < MAX_LEVEL:
+                engagement_line += f"📈 До следующего: <b>{to_next}</b> очков"
+    except Exception:
+        logger.exception("Engagement fetch failed")
+
+    await message.answer(
+        _profile_text(user, profile, engagement_line),
+        reply_markup=profile_kb(),
+    )
 
 
 @router.message(F.text == "📤 Поделиться")

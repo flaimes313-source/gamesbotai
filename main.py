@@ -55,6 +55,9 @@ try:
     _log_boot("Importing premium_reminder...")
     from services.notifications.premium_reminder import premium_reminder_loop
 
+    _log_boot("Importing tops_sender...")
+    from services.notifications.tops_sender import tops_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -165,6 +168,12 @@ async def main() -> None:
         asyncio.create_task(premium_reminder_loop(bot))
     except Exception:
         logger.exception("Failed to start premium reminder loop")
+
+    logger.info("Starting tops loop...")
+    try:
+        asyncio.create_task(tops_loop(bot))
+    except Exception:
+        logger.exception("Failed to start tops loop")
 
     logger.info("Polling started.")
     try:
