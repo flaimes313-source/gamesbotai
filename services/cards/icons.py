@@ -2,6 +2,8 @@
 Загрузка PNG-иконок для карточек.
 Иконки вшиты в base64 (services/cards/icons_data.py) —
 не зависят от файловой системы, работают на любом хостинге.
+
+Совместимо с Python 3.9+.
 """
 import io
 from typing import Optional
@@ -15,7 +17,7 @@ logger = get_logger(__name__)
 
 
 # Кэш: (key, size) → PIL.Image
-_cache: dict[tuple[str, int], Image.Image] = {}
+_cache: dict = {}
 
 
 # ============================================================
@@ -91,7 +93,7 @@ def achievement_icon(code: str, size: int = 32) -> Optional[Image.Image]:
 
 
 # ============================================================
-# Диагностика
+# Диагностика при импорте
 # ============================================================
 logger.info("[ICONS] icons.py loaded (base64 mode)")
 
@@ -112,7 +114,7 @@ def _diagnose() -> None:
         if missing:
             logger.warning(f"[ICONS] Missing icons: {missing}")
         else:
-            logger.info("[ICONS] All icons loaded ✓")
+            logger.info("[ICONS] All icons loaded OK")
     except Exception:
         logger.exception("[ICONS] Diagnosis failed")
 

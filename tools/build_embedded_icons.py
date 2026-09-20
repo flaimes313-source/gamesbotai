@@ -78,6 +78,7 @@ def main() -> int:
         '"""',
         "",
         "import base64",
+        "from typing import Optional",
         "",
     ]
 
@@ -88,7 +89,7 @@ def main() -> int:
         body_lines.append("")
 
     body_lines.append("")
-    body_lines.append("def get_icon_bytes(name: str) -> bytes | None:")
+    body_lines.append("def get_icon_bytes(name: str) -> Optional[bytes]:")
     body_lines.append('    """Возвращает байты иконки по ключу."""')
     body_lines.append("    value = globals().get(name)")
     body_lines.append("    if value is None:")

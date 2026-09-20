@@ -1,10 +1,11 @@
 """
-Генератор карточек «Вайбми» с PNG-иконками.
+Генератор карточек «Вайбми».
+Работает на Python 3.7+. Иконки вшиты в base64.
 """
 import io
 import logging
 from io import BytesIO
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -21,6 +22,9 @@ CARD_W = 900
 CARD_H = 1200
 
 
+# ============================================================
+# Шрифты
+# ============================================================
 _FONT_REGULAR_BYTES = get_regular_font_bytes()
 _FONT_BOLD_BYTES = get_bold_font_bytes()
 
@@ -34,6 +38,9 @@ def _load_font(size: int, bold: bool = False):
         return ImageFont.load_default()
 
 
+# ============================================================
+# Утилиты рисования
+# ============================================================
 def _draw_gradient(img: Image.Image, top_color, bottom_color):
     draw = ImageDraw.Draw(img)
     for y in range(CARD_H):
@@ -84,8 +91,8 @@ def _text_width(draw, text, font):
 # ============================================================
 def generate_card(
     profile: Dict[str, Any],
-    username: str | None = None,
-    bot_username: str | None = None,
+    username: Optional[str] = None,
+    bot_username: Optional[str] = None,
 ) -> bytes:
     archetype = str(profile.get("archetype", "ТВОЙ АРХЕТИП")).upper()
     theme = theme_for(archetype)
@@ -223,7 +230,7 @@ def generate_card(
             fill=(20, 20, 34, 255),
         )
 
-        # Заливка
+        # Заливка с градиентом
         fill_w = int(bar_w * value / 100)
         if fill_w > 0:
             for x in range(fill_w):
@@ -333,10 +340,6 @@ def generate_card(
     if achievements:
         achi_y = qy2 + 25
 
-        # Иконки — по коду достижения
-        font_achi_label = _load_font(18, bold=True)
-
-        # Считаем общую ширину для центрирования
         icons_with_size = 32
         gap = 22
         total_w = 0
@@ -349,7 +352,7 @@ def generate_card(
             total_w += icons_with_size + gap
 
         if pairs:
-            total_w -= gap  # убираем последний gap
+            total_w -= gap
             start_x = (CARD_W - total_w) // 2
 
             for code, icon in pairs:
