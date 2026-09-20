@@ -19,6 +19,7 @@ from bot.handlers import (
     support,
     timezone,
     engagement,
+    info,
 )
 from admin import handlers as admin_handlers
 from admin.broadcast import router as broadcast_router
@@ -36,7 +37,8 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
     root_router.include_router(timezone.router)
-    root_router.include_router(engagement.router)   # ← вовлечение
+    root_router.include_router(engagement.router)
+    root_router.include_router(info.router)         # ← О боте
     root_router.include_router(matching.router)
     root_router.include_router(compare.router)
     root_router.include_router(tests.router)

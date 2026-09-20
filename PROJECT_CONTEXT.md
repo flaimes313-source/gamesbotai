@@ -175,6 +175,9 @@ gamebot/
 │
 └── logs/ # НЕ в git
 
+bot/handlers/info.py        # ℹ️ О боте — все разделы информации
+bot/keyboards/info.py       # Клавиатуры раздела «О боте»
+
 ### Порядок роутеров в `register_handlers()`
 
 ```python

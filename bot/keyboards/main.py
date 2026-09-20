@@ -33,7 +33,10 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="💎 PRO"),
             ],
             [
+                KeyboardButton(text="ℹ️ О боте"),
                 KeyboardButton(text="⚙️ Настройки"),
+            ],
+            [
                 KeyboardButton(text="🆘 Поддержка"),
             ],
         ],
