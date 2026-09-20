@@ -74,10 +74,6 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
 # Коды достижений для карточки
 # ============================================================
 async def _get_achievement_badges(user_id: int) -> list:
-    """
-    Возвращает список кодов достижений (до 3 последних).
-    Иконки подтянет generator.py через services/cards/icons.py.
-    """
     async with async_session() as session:
         rows = (await session.execute(
             select(UserAchievement)
@@ -87,38 +83,6 @@ async def _get_achievement_badges(user_id: int) -> list:
         )).scalars().all()
 
     return [a.achievement_code for a in rows]
-
-
-# ============================================================
-# QR-код
-# ============================================================
-async def _send_qr_code(message: Message, url: str) -> None:
-    try:
-        import qrcode
-        from io import BytesIO
-
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=10,
-            border=2,
-        )
-        qr.add_data(url)
-        qr.make(fit=True)
-
-        img = qr.make_image(fill_color="white", back_color=(18, 18, 30))
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-
-        await message.answer_photo(
-            BufferedInputFile(buf.getvalue(), filename="qr.png"),
-            caption=(
-                "📱 <b>Наведи камеру</b> — друг попадёт в бота\n"
-                "и сразу увидит твой профиль!"
-            ),
-        )
-    except Exception:
-        logger.exception("QR generation failed")
 
 
 # ============================================================
@@ -238,7 +202,7 @@ async def handle_photo(message: Message):
             f"👉 <b>Проверь себя:</b> {share_url}"
         )
 
-    # Генерируем карточку с достижениями
+    # Карточка с достижениями
     try:
         achievements_codes = await _get_achievement_badges(user.id)
         analysis_with_badges = dict(analysis)
@@ -255,9 +219,6 @@ async def handle_photo(message: Message):
             caption=full_caption,
             reply_markup=share_kb(share_url),
         )
-
-        # QR-код отдельно
-        await _send_qr_code(message, share_url)
     except Exception:
         logger.exception("Card generation failed")
         await message.answer(full_caption, reply_markup=share_kb(share_url))
