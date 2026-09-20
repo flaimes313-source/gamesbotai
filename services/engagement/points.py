@@ -148,7 +148,7 @@ async def add_points(user_id: int, action: str, multiplier: int = 1) -> tuple[in
 
 
 async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
-    """Обработка повышения уровня — выдаём достижения за milestone."""
+    """Обработка повышения уровня — достижения + уведомление."""
     try:
         from services.achievements import unlock_achievement
     except Exception:
@@ -159,11 +159,35 @@ async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
     for milestone, code in LEVEL_ACHIEVEMENTS.items():
         if old_level < milestone <= new_level:
             try:
-                is_new = await unlock_achievement(user_id, code)
-                if is_new:
-                    logger.info(f"[POINTS] Unlocked achievement {code} for user={user_id}")
+                await unlock_achievement(user_id, code)
             except Exception:
                 logger.exception(f"[POINTS] Failed to unlock {code}")
+
+    # Уведомление о новом уровне
+    try:
+        from database.models import User
+        from services.engagement.notifications import add_level_up_notification
+
+        async with async_session() as session:
+            user = (await session.execute(
+                select(User).where(User.id == user_id)
+            )).scalar_one_or_none()
+
+        if user:
+            eng = await get_engagement(user_id)
+            if eng:
+                title = title_for_level(new_level)
+                to_next = points_to_next_level(eng.total_points, new_level)
+
+                add_level_up_notification(
+                    user.telegram_id,
+                    level=new_level,
+                    title=title,
+                    total_points=eng.total_points,
+                    to_next=to_next,
+                )
+    except Exception:
+        logger.exception("[POINTS] Failed to queue level up notification")
 
 
 async def get_engagement(user_id: int) -> Optional[UserEngagement]:

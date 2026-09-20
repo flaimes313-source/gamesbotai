@@ -7,14 +7,13 @@ from typing import Optional
 from sqlalchemy import select
 
 from database.connection import async_session
-from database.models import UserEngagement
+from database.models import User, UserEngagement
 from services.engagement.points import add_points
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-# Награды за стрик (дни → код достижения)
 STREAK_MILESTONES = {
     3: "streak_3",
     7: "streak_7",
@@ -105,6 +104,20 @@ async def update_streak(user_id: int) -> dict:
                 logger.info(f"[STREAK] Unlocked {milestone} for user={user_id}")
         except Exception:
             logger.exception(f"[STREAK] Failed to unlock {milestone}")
+
+        # Уведомление о стрике
+        try:
+            from services.engagement.notifications import add_streak_notification
+
+            async with async_session() as session:
+                user = (await session.execute(
+                    select(User).where(User.id == user_id)
+                )).scalar_one_or_none()
+
+            if user:
+                add_streak_notification(user.telegram_id, streak)
+        except Exception:
+            logger.exception("[STREAK] Failed to queue streak notification")
 
     logger.info(f"[STREAK] user={user_id} streak={streak} milestone={milestone}")
 

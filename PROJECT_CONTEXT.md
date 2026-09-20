@@ -565,8 +565,22 @@ text
 
     Кнопки в меню: 🎯 Челлендж дня, 📊 Моя статистика, 🏆 Топы.
 
+    **Достижения за вовлечение** (реализовано в этапе 6.1):
+- `streak_3`, `streak_7`, `streak_14`, `streak_30`, `streak_100` — за стрики
+- `level_5`, `level_10`, `level_15`, `level_20` — за уровни
+- `unlock_achievement` вызывается из:
+  - `services/engagement/points.py::_on_level_up`
+  - `services/engagement/streaks.py::update_streak`
+
 
 **Уровни (LEVELS):** 20 уровней от «Новичок» (0 очков) до «ЛЕГЕНДА ВАЙБМИ» (55000).
+
+**Уведомления о вовлечении** (`services/engagement/notifications.py`):
+- Очередь в памяти: `{telegram_id: [{type, text}]}`
+- `add_achievement_notification`, `add_level_up_notification`, `add_streak_notification`
+- `flush_notifications(bot, tg_id)` — отправляет и очищает
+- Вызов из `services/achievements.unlock_achievement`, `services/engagement/points._on_level_up`, `services/engagement/streaks.update_streak`
+- Flush в конце хендлеров: `start.py`, `analysis.py`, `tests.py`, `messaging.py`, `compare.py`
 
 6. СОБЫТИЯ (EVENT_NAMES)
 

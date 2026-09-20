@@ -29,9 +29,6 @@ router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Загрузка фото
-# ============================================================
 async def _download_photo(message: Message) -> bytes:
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
@@ -40,9 +37,6 @@ async def _download_photo(message: Message) -> bytes:
     return buf.getvalue()
 
 
-# ============================================================
-# Текст результата
-# ============================================================
 def _build_result_text(analysis: dict) -> str:
     scores = analysis.get("scores", {}) or {}
     return (
@@ -59,9 +53,6 @@ def _build_result_text(analysis: dict) -> str:
     )
 
 
-# ============================================================
-# Хуки после анализа
-# ============================================================
 async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
     try:
         from services.advertising.broadcaster import maybe_send_ad
@@ -70,9 +61,6 @@ async def _trigger_post_analysis_hooks(bot, telegram_id: int) -> None:
         logger.exception("Ad hook failed")
 
 
-# ============================================================
-# Коды достижений для карточки
-# ============================================================
 async def _get_achievement_badges(user_id: int) -> list:
     async with async_session() as session:
         rows = (await session.execute(
@@ -85,9 +73,6 @@ async def _get_achievement_badges(user_id: int) -> list:
     return [a.achievement_code for a in rows]
 
 
-# ============================================================
-# ОБРАБОТКА ФОТО
-# ============================================================
 @router.message(F.photo)
 async def handle_photo(message: Message):
     telegram_id = message.from_user.id
@@ -249,6 +234,13 @@ async def handle_photo(message: Message):
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
+    # Отправляем накопленные уведомления (достижения, уровень)
+    try:
+        from services.engagement.notifications import flush_notifications
+        await flush_notifications(message.bot, telegram_id)
+    except Exception:
+        logger.exception("flush_notifications failed")
+
 
 # ============================================================
 # Кнопка «Поделиться»
@@ -319,6 +311,13 @@ async def cb_do_share(callback: CallbackQuery):
         f"<i>{share_call}</i>",
         reply_markup=kb,
     )
+
+    # Отправляем накопленные уведомления
+    try:
+        from services.engagement.notifications import flush_notifications
+        await flush_notifications(callback.bot, callback.from_user.id)
+    except Exception:
+        logger.exception("flush_notifications failed")
 
 
 @router.callback_query(F.data.startswith("copy_link_"))

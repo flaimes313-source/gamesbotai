@@ -136,6 +136,16 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
     else:
         await message_or_callback.answer(text)
 
+    # Отправляем накопленные уведомления
+    try:
+        from services.engagement.notifications import flush_notifications
+        if isinstance(message_or_callback, CallbackQuery):
+            await flush_notifications(message_or_callback.bot, message_or_callback.from_user.id)
+        else:
+            await flush_notifications(message_or_callback.bot, message_or_callback.from_user.id)
+    except Exception:
+        logger.exception("flush_notifications failed")
+
 
 @router.message(F.text == "👥 Сравнить")
 async def compare_from_menu(message: Message):
@@ -193,7 +203,7 @@ async def cb_compare_with(callback: CallbackQuery):
         target_name = target.first_name or "Игрок"
         text = _format_comparison(my_p, their_p, target_name)
 
-    # Вовлечение: сравнение с игроком
+    # Вовлечение: сравнение
     try:
         from services.engagement.service import on_compare
         await on_compare(me.id)
@@ -201,3 +211,10 @@ async def cb_compare_with(callback: CallbackQuery):
         logger.exception("Engagement on_compare failed")
 
     await callback.message.answer(text)
+
+    # Отправляем накопленные уведомления
+    try:
+        from services.engagement.notifications import flush_notifications
+        await flush_notifications(callback.bot, callback.from_user.id)
+    except Exception:
+        logger.exception("flush_notifications failed")

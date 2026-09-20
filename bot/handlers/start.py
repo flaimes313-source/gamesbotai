@@ -236,6 +236,13 @@ async def cmd_start(message: Message):
 
     await message.answer(text, reply_markup=main_menu_kb())
 
+    # Отправляем накопленные уведомления (стрик и т.д.)
+    try:
+        from services.engagement.notifications import flush_notifications
+        await flush_notifications(message.bot, message.from_user.id)
+    except Exception:
+        logger.exception("flush_notifications failed")
+
 
 # ============================================================
 # /help

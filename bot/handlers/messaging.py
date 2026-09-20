@@ -57,9 +57,6 @@ def jokes_categories_kb(target_user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# ============================================================
-# CALLBACK: СООБЩЕНИЕ ИГРОКУ
-# ============================================================
 @router.callback_query(F.data.startswith("msg_"))
 async def cb_msg(callback: CallbackQuery):
     await callback.answer()
@@ -225,13 +222,17 @@ async def cb_send_sugg(callback: CallbackQuery):
                 ]
             ),
         )
+
+        # Отправляем накопленные уведомления
+        try:
+            from services.engagement.notifications import flush_notifications
+            await flush_notifications(callback.bot, callback.from_user.id)
+        except Exception:
+            logger.exception("flush_notifications failed")
     else:
         await callback.message.answer("❌ Не удалось доставить.")
 
 
-# ============================================================
-# CALLBACK: ПРИКОЛЫ
-# ============================================================
 @router.callback_query(F.data.startswith("joke_"))
 async def cb_joke(callback: CallbackQuery):
     logger.info(f"Joke button pressed by {callback.from_user.id}: {callback.data}")
@@ -338,5 +339,12 @@ async def cb_jokecat(callback: CallbackQuery):
                 ]
             ),
         )
+
+        # Отправляем накопленные уведомления
+        try:
+            from services.engagement.notifications import flush_notifications
+            await flush_notifications(callback.bot, callback.from_user.id)
+        except Exception:
+            logger.exception("flush_notifications failed")
     else:
         await callback.message.answer("❌ Не удалось доставить.")

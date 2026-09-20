@@ -161,6 +161,7 @@ async def _finalize_test(callback: CallbackQuery, state: dict):
         logger.exception("Test result failed")
         result = {"title": "ТЕСТ ПРОЙДЕН", "text": "Результат недоступен.", "emoji": "🧪"}
 
+    user = None
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
@@ -199,3 +200,10 @@ async def _finalize_test(callback: CallbackQuery, state: dict):
     )
 
     ACTIVE_TESTS.pop(callback.from_user.id, None)
+
+    # Отправляем накопленные уведомления
+    try:
+        from services.engagement.notifications import flush_notifications
+        await flush_notifications(callback.bot, callback.from_user.id)
+    except Exception:
+        logger.exception("flush_notifications failed")
