@@ -42,17 +42,21 @@ logs/
 
 # ============================================================
 # DATA
-# ВАЖНО: папка data/fonts должна попадать в Git!
+# Папки data/fonts и data/icons должны попадать в Git!
 # ============================================================
 data/*.json.bak
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/test_card.png
+data/test_*.png
 
-# Но НЕ игнорируем шрифты и jokes.json
+# Разрешаем в Git:
 !data/fonts/
 !data/fonts/*.ttf
 !data/jokes.json
+!data/icons/
+!data/icons/*.png
 
 # ============================================================
 # OS
