@@ -87,7 +87,6 @@ async def cb_stats(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     try:
         stats = await full_stats()
     except Exception:
@@ -118,7 +117,6 @@ async def cb_admin_chats(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     try:
         stats = await chats_stats(days=7)
     except Exception:
@@ -135,12 +133,9 @@ async def cb_admin_chats(callback: CallbackQuery):
         "🏆 <b>Топ-5 активных диалогов:</b>",
     ]
     for t in stats["top"]:
-        lines.append(
-            f"#{t['chat_id']}: {t['user1']} ↔ {t['user2']} — {t['count']} сообщений"
-        )
+        lines.append(f"#{t['chat_id']}: {t['user1']} ↔ {t['user2']} — {t['count']} сообщений")
     if not stats["top"]:
         lines.append("<i>Нет активных диалогов</i>")
-
     await callback.message.answer("\n".join(lines))
 
 
@@ -152,14 +147,12 @@ async def cb_funnel(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     try:
         funnel = await get_funnel(days=30)
     except Exception:
         logger.exception("Funnel failed")
         await callback.message.answer("❌ Не удалось построить воронку.")
         return
-
     await callback.message.answer(format_funnel(funnel))
 
 
@@ -231,21 +224,17 @@ async def cb_wl(callback: CallbackQuery):
 async def cmd_wl_add(message: Message):
     if not _is_admin(message.from_user.id):
         return
-
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
         await message.answer("Формат: <code>/wl_add &lt;tg_id&gt; [причина]</code>")
         return
-
     try:
         tg_id = int(parts[1])
     except ValueError:
         await message.answer("ID должен быть числом.")
         return
-
     reason = parts[2] if len(parts) > 2 else None
     await add_to_whitelist(tg_id, reason=reason, added_by=message.from_user.id)
-
     await message.answer(
         f"✅ <b>{tg_id}</b> добавлен в whitelist.\n\n"
         f"<b>Что это даёт:</b>\n"
@@ -260,18 +249,15 @@ async def cmd_wl_add(message: Message):
 async def cmd_wl_remove(message: Message):
     if not _is_admin(message.from_user.id):
         return
-
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer("Формат: <code>/wl_remove &lt;tg_id&gt;</code>")
         return
-
     try:
         tg_id = int(parts[1])
     except ValueError:
         await message.answer("ID должен быть числом.")
         return
-
     await remove_from_whitelist(tg_id)
     await message.answer(f"✅ <b>{tg_id}</b> удалён из whitelist.")
 
@@ -292,16 +278,13 @@ async def cb_ads_list(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         rows = (await session.execute(
             select(AdvertisingCampaign).order_by(AdvertisingCampaign.id.desc()).limit(20)
         )).scalars().all()
-
     if not rows:
         await callback.message.answer("Кампаний нет.")
         return
-
     lines = ["📋 <b>Рекламные кампании</b>\n"]
     for c in rows:
         lines.append(
@@ -316,7 +299,6 @@ async def cb_ads_new(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     ADMIN_STATE[callback.from_user.id] = {"action": "ads_new_step1"}
     await callback.message.answer(
         "➕ Новая рекламная кампания\n\n"
@@ -330,7 +312,6 @@ async def cb_ads_stop_all(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         rows = (await session.execute(
             select(AdvertisingCampaign).where(AdvertisingCampaign.status == "active")
@@ -339,7 +320,6 @@ async def cb_ads_stop_all(callback: CallbackQuery):
             c.status = "stopped"
             c.ended_at = datetime.now(timezone.utc)
         await session.commit()
-
     await callback.message.answer(f"🚨 Остановлено кампаний: {len(rows)}")
 
 
@@ -372,16 +352,13 @@ async def cb_subs_list(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         rows = (await session.execute(
             select(SubscriptionCampaign).order_by(SubscriptionCampaign.id.desc()).limit(20)
         )).scalars().all()
-
     if not rows:
         await callback.message.answer("Кампаний нет.")
         return
-
     lines = ["📋 <b>Кампании подписок</b>\n"]
     for c in rows:
         lines.append(
@@ -393,7 +370,6 @@ async def cb_subs_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "subs_new")
 async def cb_subs_new(callback: CallbackQuery, state: FSMContext):
-    """Запуск FSM-мастера создания кампании."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
@@ -405,7 +381,6 @@ async def cb_subs_stop_all(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         rows = (await session.execute(
             select(SubscriptionCampaign).where(SubscriptionCampaign.is_active.is_(True))
@@ -415,7 +390,6 @@ async def cb_subs_stop_all(callback: CallbackQuery):
             c.status = "stopped"
             c.ended_at = datetime.now(timezone.utc)
         await session.commit()
-
     await callback.message.answer(f"🚨 Остановлено кампаний: {len(rows)}")
 
 
@@ -435,16 +409,13 @@ async def cb_promos_list(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         rows = (await session.execute(
             select(Promocode).order_by(Promocode.id.desc()).limit(30)
         )).scalars().all()
-
     if not rows:
         await callback.message.answer("Промокодов нет.")
         return
-
     lines = ["🎟 <b>Промокоды</b>\n"]
     for p in rows:
         active = "✅" if p.is_active else "❌"
@@ -457,7 +428,6 @@ async def cb_promos_new(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     ADMIN_STATE[callback.from_user.id] = {"action": "promos_new_step1"}
     await callback.message.answer(
         "➕ Новый промокод\n\n"
@@ -474,7 +444,6 @@ async def cb_flags(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     flags = await get_all_flags()
     await callback.message.answer(
         "⚙️ <b>Feature flags</b>\n\n"
@@ -489,12 +458,9 @@ async def cb_flag_toggle(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     key = callback.data.replace("flag_toggle_", "")
-
     current = await is_enabled(key, default=DEFAULT_FLAGS.get(key, False))
     await set_flag(key, not current)
-
     flags = await get_all_flags()
     try:
         await callback.message.edit_reply_markup(reply_markup=flags_menu_kb(flags))
@@ -510,7 +476,6 @@ async def cb_pay(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         total = (await session.execute(
             select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.status == "succeeded")
@@ -518,7 +483,6 @@ async def cb_pay(callback: CallbackQuery):
         cnt = (await session.execute(
             select(func.count(Payment.id)).where(Payment.status == "succeeded")
         )).scalar_one()
-
     await callback.message.answer(
         f"💰 <b>Платежи</b>\n\n"
         f"Успешных: {cnt}\n"
@@ -534,7 +498,6 @@ async def cb_support(callback: CallbackQuery):
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
-
     async with async_session() as session:
         tickets = (await session.execute(
             select(SupportTicket)
@@ -542,11 +505,9 @@ async def cb_support(callback: CallbackQuery):
             .order_by(SupportTicket.id.desc())
             .limit(20)
         )).scalars().all()
-
     if not tickets:
         await callback.message.answer("🆘 Открытых тикетов нет.")
         return
-
     lines = ["🆘 <b>Открытые тикеты</b>\n"]
     for t in tickets:
         lines.append(
@@ -561,39 +522,30 @@ async def cb_support(callback: CallbackQuery):
 async def cmd_reply(message: Message):
     if not _is_admin(message.from_user.id):
         return
-
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
         await message.answer("Формат: <code>/reply &lt;ticket_id&gt; текст</code>")
         return
-
     try:
         ticket_id = int(parts[1])
     except ValueError:
         await message.answer("ID должен быть числом.")
         return
-
     reply_text = parts[2]
-
     async with async_session() as session:
         ticket = (await session.execute(
             select(SupportTicket).where(SupportTicket.id == ticket_id)
         )).scalar_one_or_none()
-
         if ticket is None:
             await message.answer("Тикет не найден.")
             return
-
         ticket.admin_reply = reply_text
         ticket.status = "closed"
         ticket.closed_at = datetime.now(timezone.utc)
-
         user = (await session.execute(
             select(User).where(User.id == ticket.user_id)
         )).scalar_one_or_none()
-
         await session.commit()
-
     if user:
         try:
             await message.bot.send_message(
@@ -607,33 +559,118 @@ async def cmd_reply(message: Message):
 
 
 # ============================================================
-# ВВОД ТЕКСТА ОТ АДМИНА (пошаговые диалоги)
+# ВРЕМЕННЫЕ КОМАНДЫ (только для отладки)
+# ============================================================
+@router.message(Command("grant_pro"))
+async def cmd_grant_pro(message: Message):
+    """Временный: /grant_pro <tg_id> <days> [reason]"""
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 3:
+        await message.answer("Формат: /grant_pro <tg_id> <days> [reason]")
+        return
+    try:
+        tg_id = int(parts[1])
+        days = int(parts[2])
+    except ValueError:
+        await message.answer("tg_id и days — числа")
+        return
+    reason = parts[3] if len(parts) > 3 else "manual"
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == tg_id)
+        )).scalar_one_or_none()
+    if user is None:
+        await message.answer("Юзер не найден")
+        return
+    from services.engagement.rewards import grant_pro_days
+    ok = await grant_pro_days(user.id, days, reason)
+    await message.answer(
+        f"{'✅' if ok else '❌'} user={user.id} tg={tg_id} PRO+{days}d ({reason})"
+    )
+
+
+@router.message(Command("fake_refs"))
+async def cmd_fake_refs(message: Message):
+    """Временный: /fake_refs <count> — создать N фиктивных рефералов."""
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Формат: /fake_refs <count>")
+        return
+    try:
+        count = int(parts[1])
+    except ValueError:
+        await message.answer("count — число")
+        return
+    if count < 1 or count > 50:
+        await message.answer("count: 1-50")
+        return
+
+    import random
+    from services.engagement.referrals import on_referred_user_analyzed
+
+    async with async_session() as session:
+        me = (await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id)
+        )).scalar_one_or_none()
+
+    if me is None:
+        await message.answer("Сначала отправь фото")
+        return
+
+    created = 0
+    for i in range(count):
+        async with async_session() as session:
+            while True:
+                fake_tg = random.randint(10_000_000_000, 99_999_999_999)
+                exists = (await session.execute(
+                    select(User).where(User.telegram_id == fake_tg)
+                )).scalar_one_or_none()
+                if exists is None:
+                    break
+            fake = User(
+                telegram_id=fake_tg,
+                username=f"fake_{fake_tg % 10000}",
+                first_name=f"Тест {fake_tg % 100}",
+                referrer_id=me.id,
+                timezone="Europe/Moscow",
+            )
+            session.add(fake)
+            await session.commit()
+            await session.refresh(fake)
+            fake_id = fake.id
+        await on_referred_user_analyzed(fake_id)
+        created += 1
+
+    await message.answer(f"✅ Создано {created} фиктивных рефералов")
+
+
+# ============================================================
+# ВВОД ТЕКСТА ОТ АДМИНА
 # ============================================================
 @router.message(F.text, lambda m: m.from_user.id in ADMIN_STATE)
 async def admin_input(message: Message):
     if not _is_admin(message.from_user.id):
         return
-
     state = ADMIN_STATE.get(message.from_user.id)
     if not state:
         return
-
     action = state.get("action")
 
-    # ---------- Реклама ----------
     if action == "ads_new_step1":
         parts = [p.strip() for p in message.text.split("|", 1)]
         if len(parts) != 2:
             await message.answer("❌ Формат: <code>Название | Текст рекламы</code>")
             return
-
         name, text = parts
         async with async_session() as session:
             c = AdvertisingCampaign(name=name, text=text, status="active")
             session.add(c)
             await session.commit()
             await session.refresh(c)
-
         ADMIN_STATE.pop(message.from_user.id, None)
         await message.answer(
             f"✅ Кампания #{c.id} создана и активирована.\n"
@@ -642,13 +679,11 @@ async def admin_input(message: Message):
         )
         return
 
-    # ---------- Промокоды ----------
     if action == "promos_new_step1":
         parts = [p.strip() for p in message.text.split("|")]
         if len(parts) != 3:
             await message.answer("❌ Формат: <code>CODE | дней | макс</code>")
             return
-
         try:
             code = parts[0].upper()
             days = int(parts[1])
@@ -656,20 +691,16 @@ async def admin_input(message: Message):
         except ValueError:
             await message.answer("❌ Дни и макс — числа.")
             return
-
         async with async_session() as session:
             exists = (await session.execute(
                 select(Promocode).where(Promocode.code == code)
             )).scalar_one_or_none()
-
             if exists:
                 await message.answer("❌ Такой промокод уже есть.")
                 return
-
             p = Promocode(code=code, type="pro_days", value=days, max_uses=max_uses, is_active=True)
             session.add(p)
             await session.commit()
-
         ADMIN_STATE.pop(message.from_user.id, None)
         await message.answer(f"✅ Промокод <code>{code}</code> создан ({days} дней, макс {max_uses}).")
         return

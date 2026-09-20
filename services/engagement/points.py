@@ -12,10 +12,6 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Таблица уровней
-# ============================================================
-# (уровень, очки для достижения, титул)
 LEVELS = [
     (1, 0, "Новичок"),
     (2, 50, "Наблюдатель"),
@@ -42,7 +38,6 @@ LEVELS = [
 MAX_LEVEL = 20
 
 
-# Уровни, за которые даются достижения
 LEVEL_ACHIEVEMENTS = {
     5: "level_5",
     10: "level_10",
@@ -51,9 +46,6 @@ LEVEL_ACHIEVEMENTS = {
 }
 
 
-# ============================================================
-# Награды за действия
-# ============================================================
 POINTS = {
     "daily_login": 5,
     "first_login": 10,
@@ -64,12 +56,11 @@ POINTS = {
     "share": 5,
     "invite_friend": 50,
     "challenge_complete": 50,
-    "streak_bonus": 1,  # × N дней
+    "streak_bonus": 1,
 }
 
 
 def level_for_points(points: int) -> int:
-    """Определяет уровень по очкам."""
     level = 1
     for lvl, threshold, _title in LEVELS:
         if points >= threshold:
@@ -80,7 +71,6 @@ def level_for_points(points: int) -> int:
 
 
 def title_for_level(level: int) -> str:
-    """Титул уровня."""
     for lvl, _threshold, title in LEVELS:
         if lvl == level:
             return title
@@ -88,7 +78,6 @@ def title_for_level(level: int) -> str:
 
 
 def points_to_next_level(current_points: int, current_level: int) -> int:
-    """Сколько очков до следующего уровня."""
     if current_level >= MAX_LEVEL:
         return 0
     for lvl, threshold, _title in LEVELS:
@@ -98,7 +87,6 @@ def points_to_next_level(current_points: int, current_level: int) -> int:
 
 
 async def get_or_create_engagement(session, user_id: int) -> UserEngagement:
-    """Возвращает или создаёт запись engagement."""
     row = (await session.execute(
         select(UserEngagement).where(UserEngagement.user_id == user_id)
     )).scalar_one_or_none()
@@ -140,6 +128,13 @@ async def add_points(user_id: int, action: str, multiplier: int = 1) -> tuple[in
         logger.info(f"[POINTS] user={user_id} LEVEL UP {old_level} → {new_level}")
         await _on_level_up(user_id, old_level, new_level)
 
+    # Проверка наград за очки
+    try:
+        from services.engagement.points_rewards import check_points_rewards
+        await check_points_rewards(user_id, total_points)
+    except Exception:
+        logger.exception("[POINTS] check_points_rewards failed")
+
     logger.info(
         f"[POINTS] user={user_id} action={action} +{added} → "
         f"total={total_points} level={new_level}"
@@ -155,7 +150,6 @@ async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
         logger.exception("[POINTS] Cannot import achievements")
         return
 
-    # Проверяем, какие milestone-уровни пересеклись
     for milestone, code in LEVEL_ACHIEVEMENTS.items():
         if old_level < milestone <= new_level:
             try:
@@ -163,7 +157,6 @@ async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
             except Exception:
                 logger.exception(f"[POINTS] Failed to unlock {code}")
 
-    # Уведомление о новом уровне
     try:
         from database.models import User
         from services.engagement.notifications import add_level_up_notification
@@ -178,7 +171,6 @@ async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
             if eng:
                 title = title_for_level(new_level)
                 to_next = points_to_next_level(eng.total_points, new_level)
-
                 add_level_up_notification(
                     user.telegram_id,
                     level=new_level,

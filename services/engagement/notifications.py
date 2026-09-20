@@ -1,6 +1,5 @@
 """
-Очередь уведомлений о достижениях и уровнях.
-Flush отправляет все накопленные уведомления через bot.
+Очередь уведомлений о достижениях, уровнях, стриках, наградах.
 """
 from typing import Optional
 
@@ -11,15 +10,12 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Очередь: telegram_id → [ {type, text}, ... ]
 _queue: dict[int, list] = {}
 
 
 def add_achievement_notification(telegram_id: int, title: str, description: str, emoji: str) -> None:
-    """Добавляет уведомление о новом достижении."""
     if telegram_id not in _queue:
         _queue[telegram_id] = []
-
     _queue[telegram_id].append({
         "type": "achievement",
         "text": (
@@ -37,7 +33,6 @@ def add_level_up_notification(
     total_points: int,
     to_next: int,
 ) -> None:
-    """Добавляет уведомление о новом уровне."""
     if telegram_id not in _queue:
         _queue[telegram_id] = []
 
@@ -58,7 +53,6 @@ def add_level_up_notification(
 
 
 def add_streak_notification(telegram_id: int, streak: int) -> None:
-    """Добавляет уведомление о milestone стрика."""
     if telegram_id not in _queue:
         _queue[telegram_id] = []
 
@@ -73,18 +67,21 @@ def add_streak_notification(telegram_id: int, streak: int) -> None:
     text = streak_lines.get(streak, f"🔥 Стрик: {streak} дней!")
     _queue[telegram_id].append({
         "type": "streak",
-        "text": (
-            f"🔥 <b>СТРИК {streak} ДНЕЙ!</b>\n\n"
-            f"{text}"
-        ),
+        "text": f"🔥 <b>СТРИК {streak} ДНЕЙ!</b>\n\n{text}",
+    })
+
+
+def add_custom_notification(telegram_id: int, text: str) -> None:
+    """Добавляет произвольное уведомление."""
+    if telegram_id not in _queue:
+        _queue[telegram_id] = []
+    _queue[telegram_id].append({
+        "type": "custom",
+        "text": text,
     })
 
 
 async def flush_notifications(bot: Bot, telegram_id: int) -> None:
-    """
-    Отправляет все накопленные уведомления.
-    Вызывается из хендлеров после действия.
-    """
     if telegram_id not in _queue:
         return
 

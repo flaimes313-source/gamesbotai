@@ -32,9 +32,6 @@ router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Утилиты
-# ============================================================
 async def _get_user_by_tg(telegram_id: int) -> User | None:
     async with async_session() as session:
         return (await session.execute(
@@ -43,7 +40,6 @@ async def _get_user_by_tg(telegram_id: int) -> User | None:
 
 
 def _progress_bar(current: int, target: int, width: int = 10) -> str:
-    """Простой прогресс-бар из блоков."""
     if target <= 0:
         return "░" * width
     filled = min(width, int(current / target * width))
@@ -59,7 +55,6 @@ async def challenge_from_menu(message: Message):
     if user is None:
         await message.answer("Сначала отправь фото!")
         return
-
     await _show_challenge(message, user.id)
 
 
@@ -70,7 +65,6 @@ async def challenge_from_callback(callback: CallbackQuery):
     if user is None:
         await callback.message.answer("Сначала отправь фото!")
         return
-
     await _show_challenge(callback.message, user.id)
 
 
@@ -81,7 +75,6 @@ async def challenge_noop(callback: CallbackQuery):
 
 async def _show_challenge(message: Message, user_id: int):
     challenge = await get_user_challenge(user_id)
-
     if not challenge:
         await message.answer("Челлендж дня временно недоступен.")
         return
@@ -105,7 +98,6 @@ async def _show_challenge(message: Message, user_id: int):
         f"{status_line}\n\n"
         f"🏆 Награда: <b>+{challenge.get('reward_points', 50)}</b> очков"
     )
-
     await message.answer(text, reply_markup=challenge_kb(challenge))
 
     await track(
@@ -124,7 +116,6 @@ async def stats_from_menu(message: Message):
     if user is None:
         await message.answer("Сначала отправь фото!")
         return
-
     await _show_stats(message, user)
 
 
@@ -135,7 +126,6 @@ async def stats_from_callback(callback: CallbackQuery):
     if user is None:
         await callback.message.answer("Сначала отправь фото!")
         return
-
     await _show_stats(callback.message, user)
 
 
@@ -188,15 +178,11 @@ async def _show_stats(message: Message, user: User):
     else:
         level_line = "🏆 <b>Максимальный уровень!</b>"
 
-    # Прогресс до реферальной награды
     referral_line = ""
-    try:
-        if total_referrals < 10:
-            referral_line = f"🎁 До PRO в подарок: <b>{total_referrals}/10</b> друзей"
-        else:
-            referral_line = "🎁 <b>10 друзей! Проверь награду.</b>"
-    except Exception:
-        pass
+    if total_referrals < 10:
+        referral_line = f"🎁 До PRO в подарок: <b>{total_referrals}/10</b> друзей"
+    else:
+        referral_line = "🎁 <b>10 друзей! Проверь награду.</b>"
 
     text = (
         f"📊 <b>МОЯ СТАТИСТИКА</b>\n\n"
@@ -221,7 +207,7 @@ async def _show_stats(message: Message, user: User):
 
 
 # ============================================================
-# 🏅 УРОВЕНЬ (отдельный экран)
+# 🏅 УРОВЕНЬ
 # ============================================================
 @router.callback_query(F.data == "my_level")
 async def level_from_callback(callback: CallbackQuery):
@@ -232,7 +218,6 @@ async def level_from_callback(callback: CallbackQuery):
         return
 
     eng = await get_engagement(user.id)
-
     if eng is None:
         total_points = 0
         level = 1
@@ -256,10 +241,7 @@ async def level_from_callback(callback: CallbackQuery):
         level_progress = total_points - current_threshold
         level_total = next_threshold - current_threshold
         level_bar = _progress_bar(level_progress, level_total)
-        progress_line = (
-            f"{level_bar}\n"
-            f"До уровня {level + 1}: <b>{to_next}</b> очков"
-        )
+        progress_line = f"{level_bar}\nДо уровня {level + 1}: <b>{to_next}</b> очков"
     else:
         progress_line = "🏆 <b>Максимальный уровень достигнут!</b>"
 
@@ -270,7 +252,6 @@ async def level_from_callback(callback: CallbackQuery):
         f"Очки: <b>{total_points}</b>\n\n"
         f"{progress_line}"
     )
-
     await callback.message.answer(text, reply_markup=level_back_kb())
 
 
@@ -279,30 +260,20 @@ async def level_from_callback(callback: CallbackQuery):
 # ============================================================
 @router.message(F.text == "🏆 Топы")
 async def tops_from_menu(message: Message):
-    await message.answer(
-        "🏆 <b>ТОПЫ</b>\n\n"
-        "Выбери категорию:",
-        reply_markup=tops_kb(),
-    )
+    await message.answer("🏆 <b>ТОПЫ</b>\n\nВыбери категорию:", reply_markup=tops_kb())
 
 
 @router.callback_query(F.data == "tops_menu")
 async def tops_from_callback(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.answer(
-        "🏆 <b>ТОПЫ</b>\n\n"
-        "Выбери категорию:",
-        reply_markup=tops_kb(),
-    )
+    await callback.message.answer("🏆 <b>ТОПЫ</b>\n\nВыбери категорию:", reply_markup=tops_kb())
 
 
 @router.callback_query(F.data.startswith("top_"))
 async def top_show(callback: CallbackQuery):
     await callback.answer("Считаю...")
     category = callback.data.replace("top_", "")
-
     text = await _build_top(category)
-
     try:
         await callback.message.edit_text(text, reply_markup=tops_back_kb())
     except Exception:
@@ -310,9 +281,6 @@ async def top_show(callback: CallbackQuery):
 
 
 async def _build_top(category: str) -> str:
-    """Строит текст топа по категории."""
-    from database.models import UserAchievement  # noqa
-
     header_map = {
         "chaos": "🔥 ТОП-10 ПО ХАОСУ",
         "humor": "😂 ТОП-10 ПО ЮМОРУ",
@@ -378,7 +346,6 @@ async def _build_top(category: str) -> str:
             for i, (e, u) in enumerate(rows, 1):
                 name = u.first_name or "Игрок"
                 lines.append(f"{i}. <b>{name}</b> — {e.total_referrals} друзей")
-
         else:
             return "Неизвестная категория."
 
@@ -391,3 +358,77 @@ async def _build_top(category: str) -> str:
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery):
     await callback.answer()
+
+
+# ============================================================
+# 🗓 НЕДЕЛЬНЫЙ ЧЕЛЛЕНДЖ
+# ============================================================
+@router.message(F.text == "🗓 Челлендж недели")
+async def weekly_from_menu(message: Message):
+    user = await _get_user_by_tg(message.from_user.id)
+    if user is None:
+        await message.answer("Сначала отправь фото!")
+        return
+
+    from services.engagement.weekly_challenges import get_user_weekly_challenge
+    wc = await get_user_weekly_challenge(user.id)
+
+    if not wc:
+        await message.answer("Челлендж недели временно недоступен.")
+        return
+
+    progress = wc.get("progress", 0)
+    target = wc.get("target_value", 5)
+    status = wc.get("status", "in_progress")
+
+    if status == "completed":
+        status_line = "✅ <b>Выполнено!</b>"
+    else:
+        status_line = (
+            f"Прогресс: <b>{progress}/{target}</b>\n"
+            f"{_progress_bar(progress, target)}"
+        )
+
+    text = (
+        f"🗓 <b>ЧЕЛЛЕНДЖ НЕДЕЛИ</b>\n\n"
+        f"<b>{wc.get('title', '')}</b>\n\n"
+        f"{wc.get('description', '')}\n\n"
+        f"{status_line}\n\n"
+        f"🏆 Награда: <b>+{wc.get('reward_points', 200)}</b> очков"
+    )
+    await message.answer(text)
+
+
+# ============================================================
+# 🧭 КВЕСТЫ
+# ============================================================
+@router.message(F.text == "🧭 Квесты")
+async def quests_from_menu(message: Message):
+    user = await _get_user_by_tg(message.from_user.id)
+    if user is None:
+        await message.answer("Сначала отправь фото!")
+        return
+
+    from services.engagement.quests import get_active_quests
+    quests = await get_active_quests(user.id)
+
+    if not quests:
+        await message.answer("Квесты временно недоступны.")
+        return
+
+    lines = ["🧭 <b>КВЕСТЫ</b>\n"]
+    for q in quests:
+        if q["status"] == "completed":
+            status = "✅ Завершён"
+        elif q["status"] == "in_progress":
+            status = f"🟢 Шаг {q['current_step']}/{q['total_steps']}"
+        else:
+            status = "⚪ Не начат"
+
+        lines.append(
+            f"{q['emoji']} <b>{q['title']}</b>\n"
+            f"   {status}\n"
+            f"   <i>{q['description']}</i>"
+        )
+
+    await message.answer("\n".join(lines))

@@ -166,6 +166,17 @@ async def mode_selected(callback: CallbackQuery):
             return
 
     await track("search_used", telegram_id=callback.from_user.id, payload={"mode": mode})
+
+    # Вовлечение: квестовый шаг "search"
+    try:
+        async with async_session() as session:
+            me = await get_my_user(session, callback.from_user.id)
+        if me is not None:
+            from services.engagement.service import on_search
+            await on_search(me.id)
+    except Exception:
+        logger.exception("Engagement on_search failed")
+
     SEARCH_STATE[callback.from_user.id] = {"mode": mode, "shown_ids": []}
     await _clear_fresh_matches(callback.from_user.id)
     await _send_next_candidate(callback, mode, callback.from_user.id)

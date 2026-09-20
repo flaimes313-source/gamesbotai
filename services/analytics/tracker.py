@@ -65,10 +65,26 @@ EVENT_NAMES = {
     "chat_ai_sent",
     "chat_ai_analyzed",
 
-    # Вовлечение (engagement)
+    # Вовлечение (engagement) — этап 5.1
     "challenge_viewed",
     "challenge_completed",
     "tops_sent",
+
+    # Награды (этап 6.2.2 + 6.3)
+    "reward_claimed",
+    "referral_reward_10",
+    "streak_reward",
+    "points_reward",
+
+    # Недельные челленджи и квесты (этап 7)
+    "weekly_challenge_viewed",
+    "weekly_challenge_completed",
+    "quest_started",
+    "quest_step_completed",
+    "quest_completed",
+
+    # Сезоны (этап 7)
+    "season_active",
 
     # Старые события (для совместимости)
     "message_sent",

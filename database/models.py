@@ -560,3 +560,104 @@ class ReferralReward(Base):
     )
     points_awarded: Mapped[int] = mapped_column(Integer, default=50)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # ============================================================
+# REWARD CLAIMS (полученные награды — разовые)
+# ============================================================
+class RewardClaim(Base):
+    __tablename__ = "reward_claims"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    reward_code: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "reward_code", name="uq_user_reward"),
+    )
+    # ============================================================
+# WEEKLY CHALLENGES
+# ============================================================
+class WeeklyChallenge(Base):
+    __tablename__ = "weekly_challenges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    week_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+
+    task_type: Mapped[str] = mapped_column(String(32))
+    target_value: Mapped[int] = mapped_column(Integer, default=5)
+    reward_points: Mapped[int] = mapped_column(Integer, default=200)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserWeeklyChallenge(Base):
+    __tablename__ = "user_weekly_challenges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    challenge_id: Mapped[int] = mapped_column(ForeignKey("weekly_challenges.id", ondelete="CASCADE"), index=True)
+
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="in_progress")
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "challenge_id", name="uq_user_weekly_challenge"),
+    )
+
+
+# ============================================================
+# QUESTS (цепочки заданий)
+# ============================================================
+class Quest(Base):
+    __tablename__ = "quests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+    emoji: Mapped[str] = mapped_column(String(8), default="🎯")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class QuestStep(Base):
+    __tablename__ = "quest_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    quest_id: Mapped[int] = mapped_column(ForeignKey("quests.id", ondelete="CASCADE"), index=True)
+    step_number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+
+    task_type: Mapped[str] = mapped_column(String(32))
+    target_value: Mapped[int] = mapped_column(Integer, default=1)
+    reward_points: Mapped[int] = mapped_column(Integer, default=50)
+
+    __table_args__ = (
+        UniqueConstraint("quest_id", "step_number", name="uq_quest_step"),
+    )
+
+
+class UserQuestProgress(Base):
+    __tablename__ = "user_quest_progress"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    quest_id: Mapped[int] = mapped_column(ForeignKey("quests.id", ondelete="CASCADE"), index=True)
+
+    current_step: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="in_progress")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "quest_id", name="uq_user_quest"),
+    )

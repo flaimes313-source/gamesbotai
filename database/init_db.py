@@ -6,18 +6,10 @@ from database.connection import engine
 from database.models import Base
 
 
-# ============================================================
-# Safe-миграции: добавляем столбцы, которых нет.
-# ============================================================
 MIGRATIONS = [
-    # support_tickets
     "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS admin_id BIGINT;",
-
-    # users — timezone
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Europe/Moscow';",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone_confirmed BOOLEAN NOT NULL DEFAULT FALSE;",
-
-    # chat_reports
     """
     CREATE TABLE IF NOT EXISTS chat_reports (
         id SERIAL PRIMARY KEY,
@@ -41,15 +33,27 @@ MIGRATIONS = [
     # Referral rewards
     "CREATE INDEX IF NOT EXISTS ix_referral_rewards_referrer_id ON referral_rewards (referrer_id);",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_referral_rewards_referred_id ON referral_rewards (referred_id);",
+
+    # Reward claims
+    "CREATE INDEX IF NOT EXISTS ix_reward_claims_user_id ON reward_claims (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_reward_claims_reward_code ON reward_claims (reward_code);",
+
+    # Weekly challenges
+    "CREATE INDEX IF NOT EXISTS ix_weekly_challenges_week_start ON weekly_challenges (week_start);",
+    "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_user_id ON user_weekly_challenges (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_challenge_id ON user_weekly_challenges (challenge_id);",
+
+    # Quests
+    "CREATE INDEX IF NOT EXISTS ix_quest_steps_quest_id ON quest_steps (quest_id);",
+    "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_user_id ON user_quest_progress (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_quest_id ON user_quest_progress (quest_id);",
 ]
 
 
 async def init_db() -> None:
-    # 1. Создаём отсутствующие таблицы
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 2. Догоняем недостающие столбцы и таблицы
     async with engine.begin() as conn:
         for sql in MIGRATIONS:
             try:

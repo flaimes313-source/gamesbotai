@@ -366,6 +366,8 @@ text
 
 referral_rewards.
 
+reward_claims, weekly_challenges, user_weekly_challenges, quests, quest_steps, user_quest_progress
+
 
 
 4. AI-СЛОЙ (GigaChat)
@@ -594,6 +596,21 @@ text
 - Окно 30 дней — учитываются только свежие рефералы
 - Прогресс показывается в `📊 Моя статистика`
 
+**Этап 6.2.2 — Реферальная награда:**
+- `services/engagement/referral_reward.py` — 10 активных друзей → 7 дней PRO (разово)
+
+**Этап 6.3 — PRO за стрики и очки:**
+- `services/engagement/streak_rewards.py` — 7д → 1д PRO, 30д → 3д PRO, 100д → 7д PRO
+- `services/engagement/points_rewards.py` — 1500 очков → 3д, 15000 → 7д
+
+**Этап 7 — Сезоны, челленджи недели, квесты:**
+- `services/seasons.py` — Хэллоуин, НГ, 8 марта, 23 февраля
+- `services/engagement/weekly_challenges.py`
+- `services/engagement/quests.py` — 2 квеста в seed
+
+**Универсальные награды:**
+- `services/engagement/rewards.py` — `claim_reward`, `grant_pro_days`, `grant_whitelist_days`
+- Таблица `reward_claims` — все разовые награды
 6. СОБЫТИЯ (EVENT_NAMES)
 
 services/analytics/tracker.py — белый список:
@@ -827,6 +844,8 @@ BotHost
     Redeploy (не Restart) — для пересборки образа.
 
     Clear cache + Redeploy — если кеш.
+
+    /fake_refs, /grant_pro (для отладки).
 
 14. ИСТОРИЯ ПРОБЛЕМ И РЕШЕНИЙ
 Проблема	Решение

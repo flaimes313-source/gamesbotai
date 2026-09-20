@@ -2,11 +2,11 @@ import asyncio
 import os
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def _log_boot(msg: str) -> None:
-    print(f"[BOOT {datetime.utcnow().isoformat()}] {msg}", flush=True)
+    print(f"[BOOT {datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
 
 _log_boot("=== PROCESS START ===")
@@ -114,6 +114,13 @@ async def main() -> None:
 
     logger.info("Seeding achievements...")
     await seed_achievements()
+
+    logger.info("Seeding quests...")
+    try:
+        from services.engagement.quests import seed_quests
+        await seed_quests()
+    except Exception:
+        logger.exception("Failed to seed quests")
 
     logger.info("Starting webhook server...")
     port = int(os.getenv("PORT", "8080"))

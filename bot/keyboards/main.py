@@ -6,9 +6,6 @@ from aiogram.types import (
 )
 
 
-# ============================================================
-# ГЛАВНОЕ REPLY-МЕНЮ
-# ============================================================
 def main_menu_kb() -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(
         keyboard=[
@@ -26,6 +23,10 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="🎯 Челлендж дня"),
+                KeyboardButton(text="🗓 Челлендж недели"),
+            ],
+            [
+                KeyboardButton(text="🧭 Квесты"),
                 KeyboardButton(text="📊 Моя статистика"),
             ],
             [
@@ -46,9 +47,6 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     return kb
 
 
-# ============================================================
-# ОТПРАВКА ФОТО
-# ============================================================
 def send_photo_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -57,9 +55,6 @@ def send_photo_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# SHARE
-# ============================================================
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -91,9 +86,6 @@ def share_only_kb(share_url: str) -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# НАСТРОЙКИ
-# ============================================================
 def settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -107,12 +99,8 @@ def settings_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# PRO
-# ============================================================
 def pro_menu_kb(is_premium: bool = False) -> InlineKeyboardMarkup:
     rows = []
-
     if is_premium:
         rows.append([InlineKeyboardButton(
             text="💎 Продлить на 1 мес (390 ₽)",
@@ -123,7 +111,6 @@ def pro_menu_kb(is_premium: bool = False) -> InlineKeyboardMarkup:
             text="💎 Подключить на 1 мес (390 ₽)",
             callback_data="buy_pro_1m",
         )])
-
     rows.append([InlineKeyboardButton(
         text="🔥 6 месяцев — 1990 ₽ (-15%)",
         callback_data="buy_pro_6m",
@@ -144,13 +131,9 @@ def pro_menu_kb(is_premium: bool = False) -> InlineKeyboardMarkup:
         text="⬅️ Назад",
         callback_data="settings",
     )])
-
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# ============================================================
-# ДОСТИЖЕНИЯ
-# ============================================================
 def achievements_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -159,9 +142,6 @@ def achievements_back_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# ПОДДЕРЖКА
-# ============================================================
 def support_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -172,9 +152,6 @@ def support_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# УТИЛИТЫ
-# ============================================================
 def back_to_main_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
