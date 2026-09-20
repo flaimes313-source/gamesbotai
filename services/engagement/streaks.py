@@ -14,7 +14,7 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Награды за стрик (дни → достижение)
+# Награды за стрик (дни → код достижения)
 STREAK_MILESTONES = {
     3: "streak_3",
     7: "streak_7",
@@ -83,8 +83,6 @@ async def update_streak(user_id: int) -> dict:
             eng.max_streak = eng.current_streak
 
         eng.last_visit_date = datetime.now(timezone.utc)
-
-        # Начисляем очки
         streak = eng.current_streak
         await session.commit()
 
@@ -97,6 +95,16 @@ async def update_streak(user_id: int) -> dict:
 
     # Milestone?
     milestone = STREAK_MILESTONES.get(streak)
+
+    if milestone:
+        # Достижение
+        try:
+            from services.achievements import unlock_achievement
+            is_new = await unlock_achievement(user_id, milestone)
+            if is_new:
+                logger.info(f"[STREAK] Unlocked {milestone} for user={user_id}")
+        except Exception:
+            logger.exception(f"[STREAK] Failed to unlock {milestone}")
 
     logger.info(f"[STREAK] user={user_id} streak={streak} milestone={milestone}")
 

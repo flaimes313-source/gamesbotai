@@ -1,6 +1,8 @@
 """
 Очки и уровни.
 """
+from typing import Optional
+
 from sqlalchemy import select
 
 from database.connection import async_session
@@ -38,6 +40,15 @@ LEVELS = [
 ]
 
 MAX_LEVEL = 20
+
+
+# Уровни, за которые даются достижения
+LEVEL_ACHIEVEMENTS = {
+    5: "level_5",
+    10: "level_10",
+    15: "level_15",
+    20: "level_20",
+}
 
 
 # ============================================================
@@ -120,14 +131,42 @@ async def add_points(user_id: int, action: str, multiplier: int = 1) -> tuple[in
 
         await session.commit()
 
-        level_up = eng.level > old_level
-        result = (added, eng.total_points, level_up)
+        new_level = eng.level
+        total_points = eng.total_points
 
-    logger.info(f"[POINTS] user={user_id} action={action} +{added} → total={result[1]} level={level_for_points(result[1])}")
-    return result
+    level_up = new_level > old_level
+
+    if level_up:
+        logger.info(f"[POINTS] user={user_id} LEVEL UP {old_level} → {new_level}")
+        await _on_level_up(user_id, old_level, new_level)
+
+    logger.info(
+        f"[POINTS] user={user_id} action={action} +{added} → "
+        f"total={total_points} level={new_level}"
+    )
+    return added, total_points, level_up
 
 
-async def get_engagement(user_id: int) -> UserEngagement | None:
+async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:
+    """Обработка повышения уровня — выдаём достижения за milestone."""
+    try:
+        from services.achievements import unlock_achievement
+    except Exception:
+        logger.exception("[POINTS] Cannot import achievements")
+        return
+
+    # Проверяем, какие milestone-уровни пересеклись
+    for milestone, code in LEVEL_ACHIEVEMENTS.items():
+        if old_level < milestone <= new_level:
+            try:
+                is_new = await unlock_achievement(user_id, code)
+                if is_new:
+                    logger.info(f"[POINTS] Unlocked achievement {code} for user={user_id}")
+            except Exception:
+                logger.exception(f"[POINTS] Failed to unlock {code}")
+
+
+async def get_engagement(user_id: int) -> Optional[UserEngagement]:
     async with async_session() as session:
         return (await session.execute(
             select(UserEngagement).where(UserEngagement.user_id == user_id)
