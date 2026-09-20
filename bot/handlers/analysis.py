@@ -146,6 +146,13 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Engagement on_photo_analyzed failed")
 
+    # ⭐ РЕФЕРАЛЬНАЯ НАГРАДА: если у юзера есть referrer — начислить ему
+    try:
+        from services.engagement.referrals import on_referred_user_analyzed
+        await on_referred_user_analyzed(user.id)
+    except Exception:
+        logger.exception("Referral reward failed")
+
     # Достижения
     try:
         await unlock_achievement(user.id, "first_photo")
@@ -172,11 +179,9 @@ async def handle_photo(message: Message):
     bot_username = (await message.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
-    # Персональный призыв
     archetype = analysis.get("archetype", "")
     share_call = pick_share_call(archetype)
 
-    # Caption карточки
     full_caption = (
         f"{result_text}\n\n"
         f"───────────────────\n"
@@ -195,11 +200,10 @@ async def handle_photo(message: Message):
             f"👉 <b>Проверь себя:</b> {share_url}"
         )
 
-    # Бейдж «новый архетип»
     if engagement_result.get("is_new_archetype"):
         full_caption += "\n\n✨ <b>Новый архетип в коллекции!</b>"
 
-    # Карточка с достижениями
+    # Карточка
     try:
         achievements_codes = await _get_achievement_badges(user.id)
         analysis_with_badges = dict(analysis)
@@ -234,7 +238,7 @@ async def handle_photo(message: Message):
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
-    # Отправляем накопленные уведомления (достижения, уровень)
+    # Отправляем накопленные уведомления
     try:
         from services.engagement.notifications import flush_notifications
         await flush_notifications(message.bot, telegram_id)
@@ -275,7 +279,6 @@ async def cb_do_share(callback: CallbackQuery):
 
     await track("share_clicked", telegram_id=callback.from_user.id)
 
-    # Вовлечение: share
     try:
         from services.engagement.service import on_share
         await on_share(user.id)
@@ -312,7 +315,6 @@ async def cb_do_share(callback: CallbackQuery):
         reply_markup=kb,
     )
 
-    # Отправляем накопленные уведомления
     try:
         from services.engagement.notifications import flush_notifications
         await flush_notifications(callback.bot, callback.from_user.id)

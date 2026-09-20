@@ -1,9 +1,6 @@
 """
 Главный API вовлечения.
-Все вызовы из хендлеров — только через этот модуль.
 """
-from typing import Optional
-
 from services.engagement.archetypes import (
     add_archetype,
     get_collection,
@@ -30,9 +27,6 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Экспорт
-# ============================================================
 __all__ = [
     "add_points",
     "add_archetype",
@@ -47,31 +41,30 @@ __all__ = [
     "points_to_next_level",
     "update_streak",
     "get_streak",
+    "on_user_visit",
+    "on_photo_analyzed",
+    "on_test_completed",
+    "on_message_sent",
+    "on_share",
+    "on_compare",
     "LEVELS",
     "MAX_LEVEL",
     "POINTS",
 ]
 
 
-# ============================================================
-# Обёртки для типовых действий
-# ============================================================
 async def on_user_visit(user_id: int) -> dict:
-    """Вызывается при /start или первом действии дня."""
+    """Вызывается при /start."""
     return await update_streak(user_id)
 
 
 async def on_photo_analyzed(user_id: int, archetype: str) -> dict:
     """Вызывается после анализа фото."""
     is_new = await add_archetype(user_id, archetype)
-
-    # Очки за анализ
     await add_points(user_id, "photo_analysis")
 
-    # Прогресс по челленджу
     challenge_result = await increment_progress(user_id, "photo")
     if not challenge_result.get("matched"):
-        # Попробуем "analysis" (для задания «2 анализа»)
         await increment_progress(user_id, "analysis")
 
     return {
@@ -93,11 +86,6 @@ async def on_message_sent(user_id: int) -> dict:
 async def on_share(user_id: int) -> dict:
     await add_points(user_id, "share")
     return await increment_progress(user_id, "share")
-
-
-async def on_referral(user_id: int) -> dict:
-    await add_points(user_id, "invite_friend")
-    return await increment_progress(user_id, "invite")
 
 
 async def on_compare(user_id: int) -> dict:

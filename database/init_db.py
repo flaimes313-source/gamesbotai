@@ -8,7 +8,6 @@ from database.models import Base
 
 # ============================================================
 # Safe-миграции: добавляем столбцы, которых нет.
-# Работает через IF NOT EXISTS — безопасно повторять.
 # ============================================================
 MIGRATIONS = [
     # support_tickets
@@ -38,6 +37,10 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_daily_challenges_date ON daily_challenges (date);",
     "CREATE INDEX IF NOT EXISTS ix_user_challenges_user_id ON user_challenges (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_challenges_challenge_id ON user_challenges (challenge_id);",
+
+    # Referral rewards
+    "CREATE INDEX IF NOT EXISTS ix_referral_rewards_referrer_id ON referral_rewards (referrer_id);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_referral_rewards_referred_id ON referral_rewards (referred_id);",
 ]
 
 

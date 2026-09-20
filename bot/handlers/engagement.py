@@ -108,8 +108,11 @@ async def _show_challenge(message: Message, user_id: int):
 
     await message.answer(text, reply_markup=challenge_kb(challenge))
 
-    await track("challenge_viewed", telegram_id=message.chat.id,
-                payload={"challenge_id": challenge.get("challenge_id")})
+    await track(
+        "challenge_viewed",
+        telegram_id=message.chat.id,
+        payload={"challenge_id": challenge.get("challenge_id")},
+    )
 
 
 # ============================================================
@@ -137,7 +140,6 @@ async def stats_from_callback(callback: CallbackQuery):
 
 
 async def _show_stats(message: Message, user: User):
-    # Engagement
     eng = await get_engagement(user.id)
 
     if eng is None:
@@ -161,15 +163,12 @@ async def _show_stats(message: Message, user: User):
         total_shares = eng.total_shares
         total_referrals = eng.total_referrals
 
-    # Коллекция архетипов
     collection = await get_collection_stats(user.id)
 
     title = title_for_level(level)
     to_next = points_to_next_level(total_points, level)
 
-    # Прогресс до следующего уровня
     if level < MAX_LEVEL:
-        # Находим очки текущего и следующего уровня
         from services.engagement.points import LEVELS
         current_threshold = 0
         next_threshold = 0
@@ -189,6 +188,16 @@ async def _show_stats(message: Message, user: User):
     else:
         level_line = "🏆 <b>Максимальный уровень!</b>"
 
+    # Прогресс до реферальной награды
+    referral_line = ""
+    try:
+        if total_referrals < 10:
+            referral_line = f"🎁 До PRO в подарок: <b>{total_referrals}/10</b> друзей"
+        else:
+            referral_line = "🎁 <b>10 друзей! Проверь награду.</b>"
+    except Exception:
+        pass
+
     text = (
         f"📊 <b>МОЯ СТАТИСТИКА</b>\n\n"
         f"🏅 Уровень: <b>{level}/{MAX_LEVEL}</b> — {title}\n"
@@ -201,7 +210,8 @@ async def _show_stats(message: Message, user: User):
         f"💬 Сообщений: <b>{total_messages}</b>\n"
         f"🧪 Тестов: <b>{total_tests}</b>\n"
         f"📤 Шерингов: <b>{total_shares}</b>\n"
-        f"👥 Приглашено друзей: <b>{total_referrals}</b>"
+        f"👥 Активных друзей: <b>{total_referrals}</b>\n"
+        f"{referral_line}"
     )
 
     try:
@@ -314,7 +324,6 @@ async def _build_top(category: str) -> str:
 
     async with async_session() as session:
         if category in ("chaos", "humor", "charisma"):
-            # Из profiles
             column = {
                 "chaos": Profile.chaos,
                 "humor": Profile.humor,

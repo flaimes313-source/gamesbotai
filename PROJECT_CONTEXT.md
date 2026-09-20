@@ -364,6 +364,8 @@ id, user_id, challenge_id, progress, status, completed_at, created_at
 UNIQUE (user_id, challenge_id)
 text
 
+referral_rewards.
+
 
 
 4. AI-СЛОЙ (GigaChat)
@@ -584,6 +586,13 @@ text
 - `flush_notifications(bot, tg_id)` — отправляет и очищает
 - Вызов из `services/achievements.unlock_achievement`, `services/engagement/points._on_level_up`, `services/engagement/streaks.update_streak`
 - Flush в конце хендлеров: `start.py`, `analysis.py`, `tests.py`, `messaging.py`, `compare.py`
+
+**Реферальная система** (`services/engagement/referrals.py`):
+- Активный реферал = зашёл по ссылке + прошёл хотя бы 1 анализ
+- +50 очков начисляется пригласившему **после первого анализа** друга
+- Защита от повторов через таблицу `referral_rewards`
+- Окно 30 дней — учитываются только свежие рефералы
+- Прогресс показывается в `📊 Моя статистика`
 
 6. СОБЫТИЯ (EVENT_NAMES)
 

@@ -83,18 +83,9 @@ async def get_or_create_user(
                     telegram_id=telegram_id,
                     payload={"referrer_id": referrer_id},
                 )
-                # Награда пригласившему
-                try:
-                    async with async_session() as session2:
-                        referrer = (await session2.execute(
-                            select(User).where(User.id == referrer_id)
-                        )).scalar_one_or_none()
-
-                    if referrer:
-                        from services.engagement.service import on_referral
-                        await on_referral(referrer.id)
-                except Exception:
-                    logger.exception("Engagement on_referral failed")
+                # ⚠️ Очки рефереру НЕ начисляем здесь.
+                # Начислим только после анализа фото друга
+                # в services/engagement/referrals.on_referred_user_analyzed
         else:
             user.last_active_at = datetime.now(timezone.utc)
             if username and user.username != username:

@@ -545,3 +545,18 @@ class UserChallenge(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "challenge_id", name="uq_user_challenge"),
     )
+    # ============================================================
+# REFERRAL REWARDS (учёт начислений за рефералов)
+# ============================================================
+class ReferralReward(Base):
+    __tablename__ = "referral_rewards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    referrer_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    referred_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    points_awarded: Mapped[int] = mapped_column(Integer, default=50)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
