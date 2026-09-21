@@ -87,7 +87,7 @@ async def handle_photo(message: Message):
     )
 
     # Rate limit
-    allowed, used, limit = await check_and_increment(user.id)
+    allowed, used, limit = await check_and_increment(telegram_id, user.id)
     if not allowed:
         await message.answer(
             f"⚠️ Ты достиг дневного лимита AI-анализов ({used}/{limit}).\n\n"

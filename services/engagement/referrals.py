@@ -15,7 +15,7 @@ from database.models import (
     User,
     UserEngagement,
 )
-from services.engagement.points import add_points, get_or_create_engagement
+from services.engagement.points import add_custom_points, get_or_create_engagement
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -98,11 +98,11 @@ async def on_referred_user_analyzed(referred_user_id: int) -> None:
         eng = await get_or_create_engagement(session, referrer_id)
         eng.total_referrals += 1
 
-        await session.commit()
-
+        # Считываем значения ДО commit (чтобы не работать с detached-объектами)
         referrer_user_id = referrer.id
-        referrer_telegram_id = referrer.telegram_id
         new_referral_count = eng.total_referrals
+
+        await session.commit()
 
     logger.info(
         f"[REFERRAL] active referral: referrer={referrer_user_id} "
@@ -110,7 +110,7 @@ async def on_referred_user_analyzed(referred_user_id: int) -> None:
     )
 
     # Начисляем очки (вне сессии)
-    await add_points(referrer_user_id, "invite_friend")
+    await add_custom_points(referrer_user_id, REFERRAL_POINTS)
 
     # Проверяем порог для награды (10 активных)
     try:
