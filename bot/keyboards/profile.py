@@ -5,6 +5,7 @@ def profile_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Новый анализ", callback_data="new_analysis")],
+            [InlineKeyboardButton(text="📈 Моя динамика", callback_data="my_dynamics")],
             [InlineKeyboardButton(text="🧪 Пройти тест", callback_data="tests_menu")],
             [InlineKeyboardButton(text="👥 Сравнить с другом", callback_data="compare_menu")],
             [InlineKeyboardButton(text="🎯 Найти игроков", callback_data="find_players")],

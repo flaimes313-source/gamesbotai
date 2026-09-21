@@ -1,5 +1,5 @@
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import select
 
 from bot.keyboards.main import main_menu_kb, share_link_kb, settings_kb
@@ -7,6 +7,15 @@ from bot.keyboards.profile import profile_kb
 from database.connection import async_session
 from database.models import Profile, User
 from services.analytics.tracker import track
+from services.analysis.dynamics import (
+    build_progress_bar,
+    format_delta,
+    format_period,
+    get_biggest_changes,
+    get_dynamics,
+    get_other_changes,
+)
+from services.cards.dynamics_chart import generate_dynamics_chart
 from services.engagement.points import (
     MAX_LEVEL,
     get_engagement,
@@ -139,6 +148,140 @@ async def settings_from_menu(message: Message):
         "⚙️ <b>Настройки</b>\n\nЧто хочешь настроить?",
         reply_markup=settings_kb(),
     )
+
+
+# ============================================================
+# 📈 МОЯ ДИНАМИКА
+# ============================================================
+@router.callback_query(F.data == "my_dynamics")
+async def cb_my_dynamics(callback: CallbackQuery):
+    await callback.answer()
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото — появятся данные для динамики!")
+        return
+
+    try:
+        dyn = await get_dynamics(user.id, limit=10)
+    except Exception:
+        logger.exception("[DYNAMICS] get_dynamics failed")
+        await callback.message.answer("😔 Не удалось собрать динамику. Попробуй позже.")
+        return
+
+    if not dyn.get("has_enough_data"):
+        await callback.message.answer(
+            "📈 <b>Моя динамика</b>\n\n"
+            "У тебя пока <b>меньше 2 анализов</b>.\n\n"
+            "Сделай ещё один анализ — и я покажу, "
+            "как меняется твой вайб со временем! 🔥"
+        )
+        return
+
+    text = _render_dynamics_text(dyn)
+
+    try:
+        await track(
+            "dynamics_viewed",
+            telegram_id=callback.from_user.id,
+            payload={"count": dyn.get("count", 0)},
+        )
+    except Exception:
+        logger.exception("[DYNAMICS] track failed")
+
+    await callback.message.answer(text)
+
+    # === График ===
+    try:
+        await _send_dynamics_chart(callback, dyn)
+    except Exception:
+        logger.exception("[DYNAMICS] chart failed")
+
+
+async def _send_dynamics_chart(callback: CallbackQuery, dyn: dict):
+    """Рисует и отправляет график по характеристике с наибольшим изменением."""
+    top = get_biggest_changes(dyn, top=1)
+    if not top:
+        return
+
+    field_key, field_data = top[0]
+    history = field_data.get("history") or []
+    label = field_data.get("label") or field_key
+
+    period = dyn.get("period") or {}
+    period_str = format_period(period.get("first"), period.get("last"))
+
+    # Последний архетип (для выбора темы)
+    archetypes = dyn.get("archetypes") or []
+    archetype = archetypes[-1] if archetypes else None
+
+    bot_username = (await callback.bot.get_me()).username
+
+    png_bytes = generate_dynamics_chart(
+        history=history,
+        label=label,
+        period=period_str,
+        archetype=archetype,
+        bot_username=bot_username,
+    )
+
+    photo = BufferedInputFile(png_bytes, filename="dynamics.png")
+    await callback.message.answer_photo(photo)
+
+
+def _render_dynamics_text(dyn: dict) -> str:
+    """Собирает текст экрана динамики."""
+    count = dyn.get("count", 0)
+    period = dyn.get("period") or {}
+    period_str = format_period(period.get("first"), period.get("last"))
+
+    top = get_biggest_changes(dyn, top=2)
+    top_keys = [k for k, _ in top]
+    others = get_other_changes(dyn, exclude=top_keys)
+
+    lines = [
+        "📈 <b>МОЯ ДИНАМИКА</b>",
+        "",
+        f"📊 Анализов: <b>{count}</b>",
+    ]
+    if period_str:
+        lines.append(f"📅 {period_str}")
+    lines.append("")
+    lines.append("━" * 15)
+    lines.append("")
+
+    # Топ-2 с прогресс-барами
+    for field_key, data in top:
+        label = data.get("label", field_key)
+        first_val = data.get("first", 0)
+        last_val = data.get("last", 0)
+        delta = data.get("delta", 0)
+        bar = build_progress_bar(last_val)
+
+        lines.append(f"<b>{label}</b>")
+        lines.append(f"{first_val} → {last_val}   <b>{format_delta(delta)}</b>")
+        lines.append(f"<code>{bar}</code>")
+        lines.append("")
+
+    # Остальные — компактно
+    if others:
+        lines.append("━" * 15)
+        lines.append("")
+        for field_key, data in others:
+            label = data.get("label", field_key)
+            first_val = data.get("first", 0)
+            last_val = data.get("last", 0)
+            delta = data.get("delta", 0)
+            lines.append(
+                f"{label}  {first_val} → {last_val}  "
+                f"<b>{format_delta(delta)}</b>"
+            )
+
+    return "\n".join(lines)
 
 
 # ============================================================

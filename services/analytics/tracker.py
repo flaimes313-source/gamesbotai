@@ -86,6 +86,9 @@ EVENT_NAMES = {
     # Сезоны (этап 7)
     "season_active",
 
+    # Динамика вайба (этап 8)
+    "dynamics_viewed",
+
     # Старые события (для совместимости)
     "message_sent",
     "joke_sent",
