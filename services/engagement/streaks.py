@@ -26,6 +26,11 @@ STREAK_MILESTONES = {
 async def update_streak(user_id: int) -> dict:
     today = datetime.now(timezone.utc).date()
 
+    # === Первый заход юзера ===
+    is_first_time = False
+    streak = 1
+    milestone = None
+
     async with async_session() as session:
         eng = (await session.execute(
             select(UserEngagement).where(UserEngagement.user_id == user_id)
@@ -40,35 +45,40 @@ async def update_streak(user_id: int) -> dict:
             )
             session.add(eng)
             await session.commit()
-            await add_points(user_id, "first_login")
-            return {
-                "current_streak": 1,
-                "is_new_day": True,
-                "streak_milestone": None,
-            }
-
-        last_visit = eng.last_visit_date.date() if eng.last_visit_date else None
-
-        if last_visit == today:
-            return {
-                "current_streak": eng.current_streak,
-                "is_new_day": False,
-                "streak_milestone": None,
-            }
-
-        yesterday = today - timedelta(days=1)
-
-        if last_visit == yesterday:
-            eng.current_streak += 1
+            is_first_time = True
         else:
-            eng.current_streak = 1
+            last_visit = eng.last_visit_date.date() if eng.last_visit_date else None
 
-        if eng.current_streak > eng.max_streak:
-            eng.max_streak = eng.current_streak
+            # Уже заходил сегодня
+            if last_visit == today:
+                return {
+                    "current_streak": eng.current_streak,
+                    "is_new_day": False,
+                    "streak_milestone": None,
+                }
 
-        eng.last_visit_date = datetime.now(timezone.utc)
-        streak = eng.current_streak
-        await session.commit()
+            yesterday = today - timedelta(days=1)
+
+            if last_visit == yesterday:
+                eng.current_streak += 1
+            else:
+                eng.current_streak = 1
+
+            if eng.current_streak > eng.max_streak:
+                eng.max_streak = eng.current_streak
+
+            eng.last_visit_date = datetime.now(timezone.utc)
+            streak = eng.current_streak
+            await session.commit()
+
+    # === Очки (вне сессии) ===
+    if is_first_time:
+        await add_points(user_id, "first_login")
+        return {
+            "current_streak": 1,
+            "is_new_day": True,
+            "streak_milestone": None,
+        }
 
     await add_points(user_id, "daily_login")
 

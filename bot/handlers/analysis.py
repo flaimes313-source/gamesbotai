@@ -87,7 +87,7 @@ async def handle_photo(message: Message):
     )
 
     # Rate limit
-    allowed, used, limit = await check_and_increment(telegram_id, user.id)
+    allowed, used, limit = await check_and_increment(user.id)
     if not allowed:
         await message.answer(
             f"⚠️ Ты достиг дневного лимита AI-анализов ({used}/{limit}).\n\n"
@@ -131,7 +131,7 @@ async def handle_photo(message: Message):
             telegram_file_id=photo.file_id,
             telegram_file_unique_id=photo.file_unique_id,
             analysis_json=analysis,
-            model=config.GIGACHAT_MODEL,
+            model=getattr(config, "GIGACHAT_VISION_MODEL", config.GIGACHAT_MODEL),
             prompt_version=prompt_version,
         ))
         profile = build_profile(user.id, analysis)

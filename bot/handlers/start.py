@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
 # ============================================================
 # Таймзона
 # ============================================================
-def _guess_timezone(language_code: str | None) -> str:
+def _guess_timezone(language_code: Optional[str]) -> str:
     mapping = {
         "ru": "Europe/Moscow",
         "uk": "Europe/Kiev",
@@ -48,10 +49,10 @@ def _guess_timezone(language_code: str | None) -> str:
 # ============================================================
 async def get_or_create_user(
     telegram_id: int,
-    username: str | None,
-    first_name: str | None,
-    referrer_id: int | None = None,
-    language_code: str | None = None,
+    username: Optional[str],
+    first_name: Optional[str],
+    referrer_id: Optional[int] = None,
+    language_code: Optional[str] = None,
 ) -> User:
     async with async_session() as session:
         user = (await session.execute(

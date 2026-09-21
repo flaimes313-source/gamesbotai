@@ -3,13 +3,13 @@
 """
 import random
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import DailyChallenge, UserChallenge, UserEngagement
-from services.engagement.points import add_points
+from services.engagement.points import add_custom_points
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -78,7 +78,6 @@ async def _get_today_start() -> datetime:
 async def get_or_create_today_challenge() -> Optional[DailyChallenge]:
     """
     Возвращает задание на сегодня. Создаёт, если нет.
-    Использует существующий челлендж, если уже создан.
     """
     today = await _get_today_start()
 
@@ -90,7 +89,6 @@ async def get_or_create_today_challenge() -> Optional[DailyChallenge]:
         if existing:
             return existing
 
-        # Создаём новое задание
         template = random.choice(CHALLENGE_POOL)
 
         challenge = DailyChallenge(
@@ -136,6 +134,9 @@ async def get_user_challenge(user_id: int) -> dict:
             await session.commit()
             await session.refresh(uc)
 
+        progress = uc.progress
+        status = uc.status
+
     return {
         "challenge_id": challenge.id,
         "title": challenge.title,
@@ -143,8 +144,8 @@ async def get_user_challenge(user_id: int) -> dict:
         "task_type": challenge.task_type,
         "target_value": challenge.target_value,
         "reward_points": challenge.reward_points,
-        "progress": uc.progress,
-        "status": uc.status,
+        "progress": progress,
+        "status": status,
     }
 
 
@@ -190,9 +191,12 @@ async def increment_progress(user_id: int, task_type: str, amount: int = 1) -> d
         await session.commit()
 
     if completed:
-        # Начисляем очки
-        await add_points(user_id, "challenge_complete")
-        logger.info(f"[CHALLENGE] user={user_id} completed '{challenge.title}'")
+        # Начисляем ровно столько, сколько обещано в челлендже
+        await add_custom_points(user_id, challenge.reward_points)
+        logger.info(
+            f"[CHALLENGE] user={user_id} completed '{challenge.title}' "
+            f"+{challenge.reward_points}"
+        )
 
     return {
         "matched": True,

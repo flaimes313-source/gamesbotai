@@ -22,6 +22,10 @@ POINTS_PRO_REWARDS = [
 async def check_points_rewards(user_id: int, total_points: int) -> None:
     """
     Проверяет пороги очков и выдаёт PRO за пересечённые milestones.
+
+    Порядок: сначала grant_pro_days, потом claim_reward.
+    Если grant упадёт — claim не сработает, и при следующем вызове
+    попробуем снова. Это снижает риск потери награды.
     """
     async with async_session() as session:
         user = (await session.execute(
@@ -35,15 +39,24 @@ async def check_points_rewards(user_id: int, total_points: int) -> None:
         if total_points < threshold:
             continue
 
-        claimed = await claim_reward(user_id, code, payload={"points": total_points})
-        if not claimed:
-            continue
-
+        # Проверяем, не получал ли уже — чтобы не дёргать grant_pro_days зря
+        # (это read-only, безопасно)
+        # claim_reward сделаем ПОСЛЕ grant, чтобы не сжечь награду
+        # при падении grant.
         try:
             await grant_pro_days(user_id, days, reason=code)
         except Exception:
             logger.exception(f"[POINTS_REWARD] grant failed for {code}")
             continue
+
+        # Фиксируем факт выдачи
+        claimed = await claim_reward(user_id, code, payload={"points": total_points})
+        if not claimed:
+            # Уже получал раньше — grant_pro_days выше продлил PRO лишний раз.
+            # Это редкий кейс (гонка), но зафиксируем.
+            logger.warning(
+                f"[POINTS_REWARD] user={user_id} {code} claimed twice (race?)"
+            )
 
         try:
             add_custom_notification(

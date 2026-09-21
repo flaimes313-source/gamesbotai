@@ -2,12 +2,12 @@
 Награда за 10 активных рефералов → 7 дней PRO.
 Разовая акция.
 """
-from database.models import User, UserEngagement
 from sqlalchemy import select
 
 from database.connection import async_session
-from services.engagement.rewards import claim_reward, grant_pro_days, grant_whitelist_days
-from services.engagement.notifications import add_achievement_notification
+from database.models import User
+from services.engagement.notifications import add_custom_notification
+from services.engagement.rewards import claim_reward, grant_pro_days
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -26,6 +26,16 @@ async def check_referral_reward(referrer_id: int, referral_count: int) -> None:
     if referral_count < REFERRAL_REWARD_THRESHOLD:
         return
 
+    # Сначала проверяем, что юзер существует
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.id == referrer_id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        logger.warning(f"[REFERRAL_REWARD] user {referrer_id} not found")
+        return
+
     # Пытаемся заклеймить (защита от повторов)
     claimed = await claim_reward(
         referrer_id,
@@ -37,16 +47,6 @@ async def check_referral_reward(referrer_id: int, referral_count: int) -> None:
         # Уже получал — ничего
         return
 
-    # Получаем юзера
-    async with async_session() as session:
-        user = (await session.execute(
-            select(User).where(User.id == referrer_id)
-        )).scalar_one_or_none()
-
-    if user is None:
-        logger.warning(f"[REFERRAL_REWARD] user {referrer_id} not found")
-        return
-
     # Выдаём PRO на 7 дней
     try:
         await grant_pro_days(referrer_id, REFERRAL_REWARD_DAYS, reason="referral_10")
@@ -56,7 +56,6 @@ async def check_referral_reward(referrer_id: int, referral_count: int) -> None:
 
     # Уведомление
     try:
-        from services.engagement.notifications import add_custom_notification
         add_custom_notification(
             user.telegram_id,
             (

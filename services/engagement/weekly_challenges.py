@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import UserWeeklyChallenge, WeeklyChallenge
-from services.engagement.points import add_points
+from services.engagement.points import add_custom_points
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,7 +54,7 @@ WEEKLY_POOL = [
 ]
 
 
-async def _week_start() -> datetime:
+def _week_start() -> datetime:
     """Понедельник текущей недели, 00:00 UTC."""
     now = datetime.now(timezone.utc)
     monday = now - timedelta(days=now.weekday())
@@ -62,7 +62,7 @@ async def _week_start() -> datetime:
 
 
 async def get_or_create_weekly_challenge() -> Optional[WeeklyChallenge]:
-    week_start = await _week_start()
+    week_start = _week_start()
 
     async with async_session() as session:
         existing = (await session.execute(
@@ -113,6 +113,9 @@ async def get_user_weekly_challenge(user_id: int) -> dict:
             await session.commit()
             await session.refresh(uc)
 
+        progress = uc.progress
+        status = uc.status
+
     return {
         "challenge_id": wc.id,
         "title": wc.title,
@@ -120,8 +123,8 @@ async def get_user_weekly_challenge(user_id: int) -> dict:
         "task_type": wc.task_type,
         "target_value": wc.target_value,
         "reward_points": wc.reward_points,
-        "progress": uc.progress,
-        "status": uc.status,
+        "progress": progress,
+        "status": status,
     }
 
 
@@ -162,8 +165,10 @@ async def increment_weekly_progress(user_id: int, task_type: str, amount: int = 
         await session.commit()
 
     if completed:
-        await add_points(user_id, "challenge_complete", multiplier=4)  # ~200 очков
-        logger.info(f"[WEEKLY] user={user_id} completed '{wc.title}'")
+        await add_custom_points(user_id, wc.reward_points)
+        logger.info(
+            f"[WEEKLY] user={user_id} completed '{wc.title}' +{wc.reward_points}"
+        )
 
     return {
         "matched": True,

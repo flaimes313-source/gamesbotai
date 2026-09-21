@@ -1,8 +1,6 @@
 """
 Очередь уведомлений о достижениях, уровнях, стриках, наградах.
 """
-from typing import Optional
-
 from aiogram import Bot
 
 from utils.logging import get_logger

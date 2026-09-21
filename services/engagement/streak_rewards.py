@@ -1,5 +1,5 @@
 """
-Награды за стрики: 7 → 1 день PRO, 30 → 3 дня PRO.
+Награды за стрики: 7 → 1 день PRO, 30 → 3 дня PRO, 100 → 7 дней PRO.
 Разовые.
 """
 from sqlalchemy import select
@@ -24,6 +24,10 @@ async def check_streak_reward(user_id: int, streak: int) -> None:
     """
     Проверяет milestone стрика и выдаёт PRO, если положено.
     Разово.
+
+    Порядок: сначала grant_pro_days, потом claim_reward.
+    Если grant упадёт — claim не сработает, и при следующем вызове
+    попробуем снова. Это снижает риск потери награды.
     """
     reward_data = STREAK_PRO_REWARDS.get(streak)
     if reward_data is None:
@@ -31,23 +35,30 @@ async def check_streak_reward(user_id: int, streak: int) -> None:
 
     reward_code, days = reward_data
 
-    claimed = await claim_reward(user_id, reward_code, payload={"streak": streak})
-    if not claimed:
-        return
-
+    # Сначала проверяем, что юзер существует
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.id == user_id)
         )).scalar_one_or_none()
 
     if user is None:
+        logger.warning(f"[STREAK_REWARD] user {user_id} not found")
         return
 
+    # Выдаём PRO
     try:
         await grant_pro_days(user_id, days, reason=reward_code)
     except Exception:
         logger.exception("[STREAK_REWARD] grant failed")
         return
+
+    # Фиксируем факт выдачи
+    claimed = await claim_reward(user_id, reward_code, payload={"streak": streak})
+    if not claimed:
+        # Уже получал раньше — grant выше продлил PRO лишний раз.
+        logger.warning(
+            f"[STREAK_REWARD] user={user_id} {reward_code} claimed twice (race?)"
+        )
 
     try:
         add_custom_notification(

@@ -29,7 +29,13 @@ async def analyze_photo(
             f"Также можно стилизовать short_description под сезон."
         )
 
-    final_prompt = (prompt_override or "") + season_block if prompt_override else None
+    # Сезонный блок добавляется всегда:
+    # - если есть prompt_override → дописываем к нему
+    # - если нет → используем сезонный блок как оверрайд (иначе провайдер
+    #   возьмёт дефолтный промт и сезон потеряется)
+    base = prompt_override or ""
+    combined = base + season_block
+    final_prompt = combined if combined else None
 
     provider = await get_ai_provider()
     result = await provider.analyze_photo(image_bytes, prompt_override=final_prompt)
