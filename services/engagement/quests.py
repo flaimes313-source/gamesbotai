@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from database.connection import async_session
 from database.models import Quest, QuestStep, UserQuestProgress
-from services.engagement.points import add_points
+from services.engagement.points import add_custom_points
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -142,6 +142,7 @@ async def start_quest(user_id: int, quest_id: int) -> bool:
             user_id=user_id,
             quest_id=quest_id,
             current_step=1,
+            step_progress=0,
             status="in_progress",
         ))
         await session.commit()
@@ -150,18 +151,51 @@ async def start_quest(user_id: int, quest_id: int) -> bool:
 
 
 async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
-    """Продвинуть все активные квесты юзера, если шаг совпал."""
-    result = {"advanced": False, "quests_completed": 0}
+    """
+    Продвигает ОДИН активный квест юзера (первый по sort_order),
+    у которого текущий шаг совпадает с task_type.
+
+    Логика:
+    - step_progress накапливается
+    - пока step_progress < step.target_value — шаг не закрывается
+    - при достижении target_value: начисляем reward_points,
+      current_step += 1, step_progress = 0
+    - если шагов больше нет — status = "completed"
+
+    Возвращает:
+      {
+        "matched": bool,           # нашёлся ли квест с таким шагом
+        "quest_id": Optional[int],
+        "step_completed": bool,    # закрылся ли текущий шаг
+        "quest_completed": bool,   # завершился ли весь квест
+        "points_awarded": int,
+      }
+    """
+    result = {
+        "matched": False,
+        "quest_id": None,
+        "step_completed": False,
+        "quest_completed": False,
+        "points_awarded": 0,
+    }
 
     async with async_session() as session:
-        progresses = (await session.execute(
-            select(UserQuestProgress).where(
+        # Все активные прогрессы, отсортированные по приоритету квеста
+        rows = (await session.execute(
+            select(UserQuestProgress, Quest)
+            .join(Quest, Quest.id == UserQuestProgress.quest_id)
+            .where(
                 UserQuestProgress.user_id == user_id,
                 UserQuestProgress.status == "in_progress",
+                Quest.is_active.is_(True),
             )
-        )).scalars().all()
+            .order_by(Quest.sort_order)
+        )).all()
 
-        for prog in progresses:
+        if not rows:
+            return result
+
+        for prog, quest in rows:
             step = (await session.execute(
                 select(QuestStep).where(
                     QuestStep.quest_id == prog.quest_id,
@@ -170,33 +204,56 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
             )).scalar_one_or_none()
 
             if step is None:
+                # Шага нет — квест повреждён, помечаем завершённым
+                prog.status = "completed"
+                prog.completed_at = datetime.now(timezone.utc)
                 continue
 
             if step.task_type != task_type:
                 continue
 
-            # Проверяем прогресс
-            # Для упрощения: считаем, что каждая активация task_type = +amount к прогрессу шага
-            # В реальном проекте — надо хранить прогресс по шагу
-            # Здесь сделаем просто: считаем, что каждая активация = завершение (target_value > 1 — тоже упрощённо)
-            # Можно улучшить позже
-            total = (await session.execute(
-                select(QuestStep).where(QuestStep.quest_id == prog.quest_id)
-            )).scalars().all()
+            # Нашли подходящий квест — работаем только с ним
+            result["matched"] = True
+            result["quest_id"] = prog.quest_id
 
-            next_step_number = prog.current_step + 1
+            prog.step_progress += amount
 
-            if next_step_number > len(total):
-                prog.status = "completed"
-                prog.completed_at = datetime.now(timezone.utc)
-                result["quests_completed"] += 1
-                await add_points(user_id, "challenge_complete")
-            else:
-                prog.current_step = next_step_number
-                await add_points(user_id, "challenge_complete")
+            if prog.step_progress >= step.target_value:
+                # Шаг закрыт
+                result["step_completed"] = True
+                result["points_awarded"] = step.reward_points
 
-            result["advanced"] = True
+                # Всего шагов в квесте
+                total_steps = (await session.execute(
+                    select(QuestStep).where(QuestStep.quest_id == prog.quest_id)
+                )).scalars().all()
 
-        await session.commit()
+                next_step_number = prog.current_step + 1
+
+                if next_step_number > len(total_steps):
+                    prog.status = "completed"
+                    prog.completed_at = datetime.now(timezone.utc)
+                    result["quest_completed"] = True
+                else:
+                    prog.current_step = next_step_number
+                    prog.step_progress = 0
+
+            await session.commit()
+            break  # только один квест за вызов
+
+    # Очки начисляем вне сессии
+    if result["points_awarded"] > 0:
+        try:
+            await add_custom_points(user_id, result["points_awarded"])
+        except Exception:
+            logger.exception("[QUESTS] Failed to award points")
+
+    if result["step_completed"]:
+        logger.info(
+            f"[QUESTS] user={user_id} task={task_type} "
+            f"step_completed quest={result['quest_id']} "
+            f"quest_completed={result['quest_completed']} "
+            f"points={result['points_awarded']}"
+        )
 
     return result

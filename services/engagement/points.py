@@ -99,6 +99,15 @@ async def get_or_create_engagement(session, user_id: int) -> UserEngagement:
     return row
 
 
+async def _check_points_rewards(user_id: int, total_points: int) -> None:
+    """Безопасная проверка наград за очки (не роняет вызывающий код)."""
+    try:
+        from services.engagement.points_rewards import check_points_rewards
+        await check_points_rewards(user_id, total_points)
+    except Exception:
+        logger.exception("[POINTS] check_points_rewards failed")
+
+
 async def add_points(user_id: int, action: str, multiplier: int = 1) -> tuple[int, int, bool]:
     """
     Начисляет очки за действие.
@@ -128,18 +137,48 @@ async def add_points(user_id: int, action: str, multiplier: int = 1) -> tuple[in
         logger.info(f"[POINTS] user={user_id} LEVEL UP {old_level} → {new_level}")
         await _on_level_up(user_id, old_level, new_level)
 
-    # Проверка наград за очки
-    try:
-        from services.engagement.points_rewards import check_points_rewards
-        await check_points_rewards(user_id, total_points)
-    except Exception:
-        logger.exception("[POINTS] check_points_rewards failed")
+    await _check_points_rewards(user_id, total_points)
 
     logger.info(
         f"[POINTS] user={user_id} action={action} +{added} → "
         f"total={total_points} level={new_level}"
     )
     return added, total_points, level_up
+
+
+async def add_custom_points(user_id: int, amount: int) -> tuple[int, int, bool]:
+    """
+    Начисляет произвольное количество очков (например, за шаг квеста).
+    Возвращает: (added, total_points, level_up)
+    """
+    if amount <= 0:
+        return 0, 0, False
+
+    async with async_session() as session:
+        eng = await get_or_create_engagement(session, user_id)
+        old_level = eng.level
+
+        eng.total_points += amount
+        eng.level = level_for_points(eng.total_points)
+
+        await session.commit()
+
+        new_level = eng.level
+        total_points = eng.total_points
+
+    level_up = new_level > old_level
+
+    if level_up:
+        logger.info(f"[POINTS] user={user_id} LEVEL UP {old_level} → {new_level}")
+        await _on_level_up(user_id, old_level, new_level)
+
+    await _check_points_rewards(user_id, total_points)
+
+    logger.info(
+        f"[POINTS] user={user_id} custom +{amount} → "
+        f"total={total_points} level={new_level}"
+    )
+    return amount, total_points, level_up
 
 
 async def _on_level_up(user_id: int, old_level: int, new_level: int) -> None:

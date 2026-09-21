@@ -545,7 +545,9 @@ class UserChallenge(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "challenge_id", name="uq_user_challenge"),
     )
-    # ============================================================
+
+
+# ============================================================
 # REFERRAL REWARDS (учёт начислений за рефералов)
 # ============================================================
 class ReferralReward(Base):
@@ -560,7 +562,9 @@ class ReferralReward(Base):
     )
     points_awarded: Mapped[int] = mapped_column(Integer, default=50)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # ============================================================
+
+
+# ============================================================
 # REWARD CLAIMS (полученные награды — разовые)
 # ============================================================
 class RewardClaim(Base):
@@ -577,7 +581,9 @@ class RewardClaim(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "reward_code", name="uq_user_reward"),
     )
-    # ============================================================
+
+
+# ============================================================
 # WEEKLY CHALLENGES
 # ============================================================
 class WeeklyChallenge(Base):
@@ -654,6 +660,7 @@ class UserQuestProgress(Base):
     quest_id: Mapped[int] = mapped_column(ForeignKey("quests.id", ondelete="CASCADE"), index=True)
 
     current_step: Mapped[int] = mapped_column(Integer, default=1)
+    step_progress: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

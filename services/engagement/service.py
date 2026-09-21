@@ -33,7 +33,7 @@ __all__ = [
     "get_engagement", "level_for_points", "title_for_level", "points_to_next_level",
     "update_streak", "get_streak",
     "on_user_visit", "on_photo_analyzed", "on_test_completed",
-    "on_message_sent", "on_share", "on_compare",
+    "on_message_sent", "on_share", "on_compare", "on_search",
     "LEVELS", "MAX_LEVEL", "POINTS",
 ]
 
@@ -101,7 +101,7 @@ async def on_message_sent(user_id: int) -> dict:
 
     try:
         from services.engagement.quests import advance_quest
-        await advance_quest(user_id, "message")
+        await advance_quest(user_id, "message", amount=1)
     except Exception:
         logger.exception("Quest advance failed")
 
@@ -114,7 +114,7 @@ async def on_share(user_id: int) -> dict:
 
     try:
         from services.engagement.quests import advance_quest
-        await advance_quest(user_id, "share")
+        await advance_quest(user_id, "share", amount=1)
     except Exception:
         logger.exception("Quest advance failed")
 
@@ -132,7 +132,7 @@ async def on_compare(user_id: int) -> dict:
 
     try:
         from services.engagement.quests import advance_quest
-        await advance_quest(user_id, "compare")
+        await advance_quest(user_id, "compare", amount=1)
     except Exception:
         logger.exception("Quest advance failed")
 
@@ -143,6 +143,6 @@ async def on_search(user_id: int) -> None:
     """Вызывается при поиске игроков."""
     try:
         from services.engagement.quests import advance_quest
-        await advance_quest(user_id, "search")
+        await advance_quest(user_id, "search", amount=1)
     except Exception:
         logger.exception("Quest advance failed")
