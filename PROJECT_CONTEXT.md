@@ -1099,3 +1099,310 @@ text
 12. **Новый раздел 16** — «Правки этапа 6.2.2 + 6.3 + 7» — перечислены все изменённые файлы и что именно в них поменялось.
 
 **Что НЕ трогал:** разделы 1, 4, 7, 8, 10, 11, 17, 18 — оставил как было (они не касаются этапа 6.2.2 + 6.3 + 7).
+
+---
+
+## 17. ШАГ 1.2 — РЕДКИЕ / ЛЕГЕНДАРНЫЕ АРХЕТИПЫ (2026-09-22)
+
+### Кратко
+
+AI генерит обычный архетип, а бэк с шансом **3%** подменяет его
+на один из **8 легендарных**. Легендарка = золотая рамка на карточке,
+особый caption, +300 очков, 2 достижения.
+
+### Список легендарных (8 штук)
+
+```
+1. ХРАНИТЕЛЬ ТИШИНЫ
+2. НЕКРОНОМИКОН В КАРМАНЕ
+3. ПОСЛЕДНИЙ ИЗ ЛЕГЕНД
+4. ТОТ КОГО НЕ ДОЛЖНО БЫЛО БЫТЬ
+5. ИМПЕРАТОР БЕЗ ТРОНА
+6. ГЛАВНЫЙ ГЕРОЙ ЧУЖОГО СНА
+7. ФЕНИКС ИЗ ПЕПЛА
+8. АРХИТЕКТОР РЕАЛЬНОСТИ
+```
+
+Все — капсом, длинные, не пересекаются с ключевыми словами
+тем из `services/cards/themes.py`.
+
+### Защита от инфляции
+
+- Не чаще **одной легендарки в 7 дней** (cooldown).
+- Не раньше **3-го анализа** у юзера.
+- Если недавно была — шанс понижается до **1%**.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `services/analysis/rarity.py` | Список легендарных, шансы, cooldown, `maybe_make_legendary()`, `mark_legendary_received()`, `is_legendary()`, `pick_random_legendary()` |
+| `prompts/photo_analysis_v3.py` | Промт v3: эпичные названия + явный запрет AI генерить легендарки |
+
+### Изменённые файлы
+
+| Файл | Что сделано |
+|---|---|
+| `services/cards/themes.py` | Тема `legendary` (золото+янтарь). `theme_for()` / `theme_name_for()` — приоритет `is_legendary()` над keyword-поиском. `tag_for_archetype()` для легендарки → `#легендарный_вайб` |
+| `services/cards/generator.py` | Параметр `is_legendary: bool=False`. Золотая двойная рамка (`_draw_legendary_border`), значок «ЛЕГЕНДАРНЫЙ» со звёздочками (`_draw_legendary_badge`), заголовок «ЛЕГЕНДАРНЫЙ АРХЕТИП», усиленные свечения, сдвиг блока характеристик на 20px вниз |
+| `database/models.py` | `UserEngagement.last_legendary_at` (DateTime, nullable) |
+| `database/init_db.py` | Миграция `ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS last_legendary_at TIMESTAMPTZ;` |
+| `database/seed_achievements.py` | Достижения `first_legendary` (✨) и `five_legendaries` (🌟) |
+| `services/analytics/tracker.py` | В EVENT_NAMES: `legendary_archetype`, `legendary_achievement` |
+| `bot/handlers/analysis.py` | `maybe_make_legendary()` после AI, подмена `analysis["archetype"]`, `_handle_legendary_achievements()`, `_count_unique_legendaries()`, `mark_legendary_received()`, `add_custom_points(300)`, особый caption, `generate_card(..., is_legendary=...)` |
+| `services/experiments.py` | `EXPERIMENTS["photo_prompt"] = ["photo_v1", "photo_v2", "photo_v3"]`. Fallback на v3 для устаревших вариантов |
+
+### Поток в `analysis.py`
+
+```
+AI → analysis["archetype"]
+  ↓
+maybe_make_legendary(user.id, archetype) → (final_archetype, is_legendary)
+  ↓
+если легендарка: analysis["archetype"] = final_archetype
+  ↓
+сохраняем Profile (в БД уже легендарное имя)
+  ↓
+on_photo_analyzed → обычные очки (15 + 30 если новый)
+  ↓
+если легендарка:
+    track("legendary_archetype")
+    add_custom_points(user.id, 300)
+    mark_legendary_received(user.id)         # cooldown
+    _handle_legendary_achievements(...)      # first / five
+  ↓
+build_result_text(is_legendary) — плашка в caption
+  ↓
+generate_card(..., is_legendary=True) — золотая рамка
+```
+
+### Константы (`services/analysis/rarity.py`)
+
+| Константа | Значение | Смысл |
+|---|---|---|
+| `LEGENDARY_ARCHETYPES` | 8 имён | Список легендарных |
+| `LEGENDARY_CHANCE` | 0.03 | Базовый шанс 3% |
+| `LEGENDARY_CHANCE_REDUCED` | 0.01 | Пониженный 1% (в кулдауне) |
+| `LEGENDARY_COOLDOWN_DAYS` | 7 | Дней между легендарками |
+| `LEGENDARY_MIN_ANALYSES` | 3 | Минимум анализов до первой |
+| `LEGENDARY_POINTS` | 300 | Очков за легендарку |
+
+### Достижения
+
+| Код | Название | Условие |
+|---|---|---|
+| `first_legendary` | «Первый легендарный» | Первая легендарка |
+| `five_legendaries` | «Коллекционер легенд» | 5 **разных** легендарных |
+
+### A/B/C-тест промтов
+
+- `photo_v1` — базовый
+- `photo_v2` — расширенный (дерзкий стиль)
+- `photo_v3` — эпичные названия + запрет легендарок
+
+Назначение стабильно на `telegram_id` (md5). Старые юзеры НЕ
+переезжают при изменении списка. Отчёт `experiments_report.py`
+покажет 3 строки автоматически.
+
+### Как тестировать легендарку
+
+В `services/analysis/rarity.py` временно:
+
+```python
+LEGENDARY_CHANCE = 1.0
+LEGENDARY_MIN_ANALYSES = 0
+LEGENDARY_COOLDOWN_DAYS = 0
+```
+
+Первая же легендарка выпадет. **Откатить после теста!**
+
+### Порядок в reward-логике (важно)
+
+Для легендарки:
+1. `track("legendary_archetype")`
+2. `add_custom_points(user.id, 300)`
+3. `mark_legendary_received(user.id)` — cooldown
+4. `_handle_legendary_achievements(...)` — достижения
+
+Если упадёт шаг 2 — cooldown не обновится, легендарка может выпасть снова.
+Если упадёт шаг 3 — очки начислены, но cooldown не сдвинут.
+Это **осознанный компромисс**: важнее наградить игрока, чем
+защититься от повторной легендарки.
+
+### История проблем этого шага
+
+| Проблема | Решение |
+|---|---|
+| Легендарка подменялась после сохранения Profile | `maybe_make_legendary` вызывается ДО `build_profile` |
+| Тема `legendary` не подхватывалась, если в имени есть ключевое слово | Приоритет `is_legendary()` в `theme_for()` перед keyword-поиском |
+| `last_legendary_at` отсутствовал в БД | Миграция в `init_db.py` + `getattr(eng, "last_legendary_at", None)` в `rarity.py` |
+| AI сам генерил «легендарные» имена | Явный запрет в промте v3 |
+| Старые юзеры застревали на удалённом варианте A/B | Fallback на v3 в `pick_prompt_by_variant()` |
+| Двойная сессия при cooldown | `mark_legendary_received()` — отдельная функция, вызывается после основной транзакции |
+
+---
+
+## 18. ШАГ 1.3 — ВАЙБ-ОТЧЁТ (AI-ПСИХОЛОГ) (2026-09-22)
+
+### Кратко
+
+Две связанные фичи:
+1. **«Мой вайб-отчёт»** — по запросу, кнопка в профиле. Доступна при ≥ 3 анализов.
+2. **«Твой вайб-месяц»** — авто-рассылка по воскресеньям 19:00 по TZ юзера,
+   только для активных (≥ 3 активных дней за неделю). С картинкой-сводкой.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/vibe_report.py` | 2 промта: `VIBE_REPORT_PROMPT` (портрет) и `VIBE_WEEKLY_PROMPT` (сводка) |
+| `services/analysis/vibe_report.py` | `build_vibe_report(user_id, weekly)` — сбор данных + перцентили + AI |
+| `bot/handlers/vibe_report.py` | Хендлер кнопки «🧠 Мой вайб-отчёт» |
+| `services/cards/vibe_summary.py` | Карточка «Твой вайб-месяц» (PNG, 900×1200) |
+| `services/notifications/vibe_weekly.py` | Планировщик: `weekly_vibe_loop(bot)` |
+
+### Изменённые файлы
+
+| Файл | Что сделано |
+|---|---|
+| `services/ai/base.py` | Абстрактный метод `generate_vibe_report(profile_data, weekly=False)` |
+| `services/ai/gigachat.py` | Реализация + утилита `_parse_vibe_report_text()` |
+| `bot/keyboards/profile.py` | Кнопка «🧠 Мой вайб-отчёт» (callback `vibe_report`) |
+| `bot/handlers/__init__.py` | Регистрация `vibe_report.router` после `profile.router` |
+| `services/analytics/tracker.py` | События `vibe_report_viewed`, `vibe_weekly_sent` |
+| `main.py` | Запуск `weekly_vibe_loop(bot)` после `tops_loop` |
+
+### Как работает отчёт по запросу
+
+```
+👤 Мой профиль → 🧠 Мой вайб-отчёт
+  ↓
+build_vibe_report(user_id, weekly=False)
+  ├── проверка: >= 3 анализов? нет → заглушка «Сделай ещё N»
+  ├── сбор: 10 последних профилей, статистика, коллекция
+  ├── перцентили (charisma, chaos, humor, points) — по всей БД
+  ├── рекомендации: непройденный тест / охота за легендаркой / друг
+  └── AI → {text, summary, recommendation}
+  ↓
+Отправка: header + text + «💡 Совет: …» + inline-кнопки
+  (🔄 Обновить / 📤 Поделиться / ⬅️ В профиль)
+```
+
+### Как работает недельная рассылка
+
+```
+weekly_vibe_loop(bot) просыпается каждые 15 минут
+  ↓
+для юзеров с локальным «воскресенье 19:00»:
+  ├── уже слали сегодня? → skip
+  ├── active_days < 3 за 7 дней? → skip (skipped_inactive)
+  └── да:
+        build_vibe_report(user_id, weekly=True)
+        generate_vibe_summary_card(summary, stats, archetype, bot_username, period_label)
+        send_photo(card, caption)
+        track("vibe_weekly_sent")
+```
+
+### Перцентили
+
+Считаются на бэке: `PERCENT_RANK` через `COUNT(*) WHERE column < my_value / total * 100`.
+Порог `total >= 20` — если база меньше, перцентиль = `None` (не позорим «топ-100%»).
+Передаётся AI как факт: `«харизма — топ-20%»`.
+
+### Рекомендации (3 типа)
+
+1. **Непройденный тест** — `Test.is_active`, `is_premium=False`, не в `user_tests`.
+2. **Охота за легендаркой** — если `legendary_count == 0` и `total_analyses >= 3`.
+3. **Приглашение друга** — если `total_referrals == 0`.
+
+Максимум 3. Бэк решает, AI вплетает в текст.
+
+### Формат ответа AI
+
+GigaChat возвращает **ТЕКСТ** (не JSON), с маркерами:
+
+```
+[SUMMARY]
+одна короткая фраза для картинки
+
+[REPORT]
+основной текст отчёта (HTML)
+
+[RECOMMENDATION]
+одна рекомендация
+```
+
+Парсер `_parse_vibe_report_text()` в `gigachat.py` достаёт блоки регуляркой.
+Fallback: если маркеров нет — весь текст в `text`, первое предложение в `summary`.
+
+### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `services/analysis/vibe_report.py` | `MIN_ANALYSES_FOR_REPORT` | 3 |
+| `services/analysis/vibe_report.py` | `PROFILES_LIMIT` | 10 |
+| `services/notifications/vibe_weekly.py` | `WEEKLY_TARGET_HOUR` | 19 |
+| `services/notifications/vibe_weekly.py` | `WEEKLY_TARGET_WEEKDAY` | 6 (вс) |
+| `services/notifications/vibe_weekly.py` | `MIN_ACTIVE_DAYS_FOR_WEEKLY` | 3 |
+| `services/notifications/vibe_weekly.py` | `CHECK_INTERVAL_SECONDS` | 900 (15 мин) |
+
+### Что НЕ хранится
+
+- Отчёты **не сохраняются** в БД (без кэша).
+- Генерация **всегда свежая** при каждом запросе.
+- Единственное, что пишется — событие в `events` (для аналитики и anti-dup).
+
+### События
+
+| Событие | Когда | Payload |
+|---|---|---|
+| `vibe_report_viewed` | Юзер открыл/обновил отчёт в профиле | `{weekly, text_len, has_recommendation}` |
+| `vibe_weekly_sent` | Недельная сводка отправлена | `{active_days, had_card}` |
+
+### Карточка «Твой вайб-месяц»
+
+- Размер **900×1200** (как основная).
+- Тема — по последнему архетипу юзера (если легендарка → золотая тема).
+- Заголовок «Т В О Й   В А Й Б - М Е С Я Ц».
+- Плашка с summary от AI (крупным шрифтом).
+- **6 плиток 2×3** с цифрами:
+  📸 Анализов · ⭐ Очков · 🔥 Стрик · 📅 Активных дней · 🎨 Архетипов · ✨ Легендарных
+- Иконки — PNG-base64 из `stat_icon()`. Фолбэк — ромб.
+- Футер: «ВАЙБМИ · твой вайб-месяц» + @bot_username.
+
+### Защита от дублей
+
+- `_already_sent_today(telegram_id)` — проверяет `events.vibe_weekly_sent` за сегодня.
+- Если бот перезапустился в 19:05, повторная отправка не произойдёт.
+
+### Как тестировать
+
+**Отчёт по запросу:**
+1. Сделай ≥ 3 анализа.
+2. `👤 Мой профиль → 🧠 Мой вайб-отчёт`.
+3. Проверь: заголовок «МОЙ ВАЙБ-ОТЧЁТ», текст от AI, кнопки.
+
+**Недельная рассылка:**
+- Планировщик срабатывает только **в воскресенье 19:00 по TZ**.
+- Для теста — временно поменяй `WEEKLY_TARGET_HOUR` / `WEEKLY_TARGET_WEEKDAY`
+  на текущие значения, дождись итерации (до 15 мин), откати.
+- Проверь: `active_days >= 3` (иначе `MIN_ACTIVE_DAYS_FOR_WEEKLY = 0` временно).
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| GigaChat вернул JSON вместо текста | Промт явно требует `[SUMMARY]/[REPORT]/[RECOMMENDATION]`, парсер устойчив к отсутствию |
+| `KeyError` в `format()` из-за weekly-переменных в портретном промте | В `VIBE_REPORT_PROMPT` weekly-переменные в комментарии-заглушке |
+| AI разошёлся — текст > 4096 | Обрезка до 3800 символов в `vibe_report.py` (handler) |
+| Перцентиль «топ-100%» при малой базе | Порог `total >= 20` → `None` |
+| Юзер неактивен — спамить некрасиво | Фильтр `active_days >= 3` |
+| Дубль при перезапуске в 19:05 | `_already_sent_today` через events |
+| AI упал — юзер не должен видеть ошибку | Fallback-текст + `available=True` |
+| DetachedInstanceError при сборе профилей | Всё собирается внутри одной сессии, AI вызывается после закрытия |
+
+### Точка отката
+
+Если нужно выключить фичу целиком:
+- **По запросу:** закомментировать кнопку в `bot/keyboards/profile.py`.
+- **Недельная:** `is_enabled("weekly_vibe_enabled", default=True)` в `vibe_weekly.py` → поставить `default=False`.
