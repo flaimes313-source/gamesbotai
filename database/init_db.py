@@ -50,6 +50,12 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_quest_steps_quest_id ON quest_steps (quest_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_user_id ON user_quest_progress (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_quest_id ON user_quest_progress (quest_id);",
+
+    # Legendary archetypes (Шаг 1.2)
+    # Дата последнего выпадения легендарного архетипа.
+    # NULL = юзер ещё не получал легендарных. Используется
+    # в services/analysis/rarity.py для cooldown 7 дней.
+    "ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS last_legendary_at TIMESTAMPTZ;",
 ]
 
 

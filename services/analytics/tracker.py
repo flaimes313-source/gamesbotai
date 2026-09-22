@@ -89,6 +89,14 @@ EVENT_NAMES = {
     # Динамика вайба (этап 8)
     "dynamics_viewed",
 
+    # Легендарные архетипы (Шаг 1.2)
+    # legendary_archetype — выпал легендарный архетип (бэк подменил
+    #   обычный на легендарный с шансом ~3%).
+    # legendary_achievement — получено достижение за легендарку:
+    #   first_legendary (первая) или five_legendaries (5 разных).
+    "legendary_archetype",
+    "legendary_achievement",
+
     # Старые события (для совместимости)
     "message_sent",
     "joke_sent",

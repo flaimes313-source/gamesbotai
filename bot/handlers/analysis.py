@@ -19,6 +19,13 @@ from services.achievements import unlock_achievement
 from services.analytics.tracker import track
 from services.analysis.photo_analysis import analyze_photo
 from services.analysis.profile_builder import build_profile
+from services.analysis.rarity import (
+    LEGENDARY_ARCHETYPES,
+    LEGENDARY_POINTS,
+    is_legendary,
+    maybe_make_legendary,
+    mark_legendary_received,
+)
 from services.cards.generator import generate_card
 from services.experiments import get_variant, pick_prompt_by_variant
 from services.rate_limit import check_and_increment
@@ -37,10 +44,20 @@ async def _download_photo(message: Message) -> bytes:
     return buf.getvalue()
 
 
-def _build_result_text(analysis: dict) -> str:
+def _build_result_text(analysis: dict, is_legendary: bool = False) -> str:
+    """
+    Собирает текст результата анализа.
+    При is_legendary=True — добавляет плашку «✨ ЛЕГЕНДАРНЫЙ АРХЕТИП!».
+    """
     scores = analysis.get("scores", {}) or {}
+
+    if is_legendary:
+        header = f"✨🔥 <b>ЛЕГЕНДАРНЫЙ АРХЕТИП!</b> 🔥✨\n\n🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>"
+    else:
+        header = f"🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>"
+
     return (
-        f"🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>\n\n"
+        f"{header}\n\n"
         f"{analysis.get('short_description', '')}\n\n"
         f"Харизма: <b>{scores.get('charisma', 0)}</b>/100\n"
         f"Уверенность: <b>{scores.get('confidence', 0)}</b>/100\n"
@@ -71,6 +88,55 @@ async def _get_achievement_badges(user_id: int) -> list:
         )).scalars().all()
 
     return [a.achievement_code for a in rows]
+
+
+async def _count_unique_legendaries(user_id: int) -> int:
+    """
+    Считает, сколько РАЗНЫХ легендарных архетипов уже собрал юзер.
+    Читает profiles.archetype и фильтрует по списку LEGENDARY_ARCHETYPES.
+    Используется для достижения five_legendaries.
+    """
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(Profile.archetype).where(Profile.user_id == user_id)
+        )).scalars().all()
+
+    seen = set()
+    for arch in rows:
+        if arch and is_legendary(arch):
+            seen.add(arch.strip().upper())
+    return len(seen)
+
+
+async def _handle_legendary_achievements(user_id: int, telegram_id: int) -> None:
+    """
+    Триггерит достижения за легендарку:
+    - first_legendary — если это первая.
+    - five_legendaries — если собрано >= 5 разных.
+    Безопасно: любая ошибка логируется, но не валит поток.
+    """
+    try:
+        unique_count = await _count_unique_legendaries(user_id)
+
+        if unique_count >= 1:
+            newly = await unlock_achievement(user_id, "first_legendary")
+            if newly:
+                await track(
+                    "legendary_achievement",
+                    telegram_id=telegram_id,
+                    payload={"code": "first_legendary", "unique_count": unique_count},
+                )
+
+        if unique_count >= 5:
+            newly = await unlock_achievement(user_id, "five_legendaries")
+            if newly:
+                await track(
+                    "legendary_achievement",
+                    telegram_id=telegram_id,
+                    payload={"code": "five_legendaries", "unique_count": unique_count},
+                )
+    except Exception:
+        logger.exception("Legendary achievements failed")
 
 
 @router.message(F.photo)
@@ -123,6 +189,23 @@ async def handle_photo(message: Message):
 
     await track("analysis_completed", telegram_id=telegram_id)
 
+    # ============================================================
+    # РЕДКОСТЬ: возможно, подменим архетип на легендарный
+    # ============================================================
+    original_archetype = analysis.get("archetype", "")
+    try:
+        final_archetype, is_legendary_flag = await maybe_make_legendary(
+            user.id, original_archetype
+        )
+    except Exception:
+        logger.exception("maybe_make_legendary failed")
+        final_archetype, is_legendary_flag = original_archetype, False
+
+    if is_legendary_flag:
+        # Подменяем архетип во всём analysis, чтобы и в БД, и на карточке,
+        # и в тексте, и в share-тексте было одно и то же имя.
+        analysis["archetype"] = final_archetype
+
     # Сохраняем
     async with async_session() as session:
         photo = message.photo[-1]
@@ -145,6 +228,37 @@ async def handle_photo(message: Message):
         engagement_result = await on_photo_analyzed(user.id, analysis.get("archetype", ""))
     except Exception:
         logger.exception("Engagement on_photo_analyzed failed")
+
+    # ============================================================
+    # Легендарка: события, очки, cooldown, достижения
+    # ============================================================
+    if is_legendary_flag:
+        # Событие: выпала легендарка
+        try:
+            await track(
+                "legendary_archetype",
+                telegram_id=telegram_id,
+                payload={
+                    "archetype": final_archetype,
+                    "replaced_from": original_archetype,
+                },
+            )
+        except Exception:
+            logger.exception("track legendary_archetype failed")
+
+        # Очки за легендарку (вместо обычных 30 за new_archetype —
+        # начисляем дополнительно, чтобы не ломать on_photo_analyzed)
+        try:
+            from services.engagement.points import add_custom_points
+            await add_custom_points(user.id, LEGENDARY_POINTS)
+        except Exception:
+            logger.exception("add_custom_points legendary failed")
+
+        # Обновляем cooldown: last_legendary_at = now
+        try:
+            await mark_legendary_received(user.id)
+        except Exception:
+            logger.exception("mark_legendary_received failed")
 
     # ⭐ РЕФЕРАЛЬНАЯ НАГРАДА: если у юзера есть referrer — начислить ему
     try:
@@ -173,14 +287,26 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Achievement unlock failed")
 
+    # Легендарные достижения — отдельно, после базовых
+    if is_legendary_flag:
+        await _handle_legendary_achievements(user.id, telegram_id)
+
     # Текст результата
-    result_text = _build_result_text(analysis)
+    result_text = _build_result_text(analysis, is_legendary=is_legendary_flag)
 
     bot_username = (await message.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
     archetype = analysis.get("archetype", "")
-    share_call = pick_share_call(archetype)
+
+    # Для легендарки — особый share-призыв вместо общего pick_share_call
+    if is_legendary_flag:
+        share_call = (
+            "🔥 Мне выпал ЛЕГЕНДАРНЫЙ архетип! "
+            "Проверь свой вайб — вдруг ты тоже?"
+        )
+    else:
+        share_call = pick_share_call(archetype)
 
     full_caption = (
         f"{result_text}\n\n"
@@ -203,6 +329,9 @@ async def handle_photo(message: Message):
     if engagement_result.get("is_new_archetype"):
         full_caption += "\n\n✨ <b>Новый архетип в коллекции!</b>"
 
+    if is_legendary_flag:
+        full_caption += "\n\n🌟 <b>+300 очков за легендарный архетип!</b>"
+
     # Карточка
     try:
         achievements_codes = await _get_achievement_badges(user.id)
@@ -213,6 +342,7 @@ async def handle_photo(message: Message):
             analysis_with_badges,
             message.from_user.username,
             bot_username,
+            is_legendary=is_legendary_flag,
         )
         photo_input = BufferedInputFile(card_bytes, filename="card.png")
         await message.answer_photo(
@@ -272,7 +402,15 @@ async def cb_do_share(callback: CallbackQuery):
 
     bot_username = (await callback.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
-    share_call = pick_share_call(profile_archetype)
+
+    # Если последний архетип — легендарный, особый share-призыв
+    if profile_archetype and is_legendary(profile_archetype):
+        share_call = (
+            "🔥 Мне выпал ЛЕГЕНДАРНЫЙ архетип! "
+            "Проверь свой вайб — вдруг ты тоже?"
+        )
+    else:
+        share_call = pick_share_call(profile_archetype)
 
     share_text = f"Мне AI выдал смешной профиль 😂 {share_call}"
     share_link = f"https://t.me/share/url?url={share_url}&text={share_text}"

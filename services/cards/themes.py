@@ -1,5 +1,7 @@
 from typing import Dict
 
+from services.analysis.rarity import is_legendary
+
 
 # ============================================================
 # Цветовые темы под архетипы
@@ -95,7 +97,16 @@ THEMES: Dict[str, dict] = {
         "text": (255, 245, 248),
         "subtext": (190, 145, 165),
     },
-    # 11. ДЕФОЛТ
+    # 11. ЛЕГЕНДАРНЫЙ (золото + янтарь)
+    "legendary": {
+        "bg_top": (26, 18, 4),
+        "bg_bottom": (58, 38, 8),
+        "accent": (255, 215, 0),        # чистое золото
+        "accent2": (255, 160, 0),       # янтарь
+        "text": (255, 250, 235),
+        "subtext": (200, 170, 110),
+    },
+    # 12. ДЕФОЛТ
     "default": {
         "bg_top": (12, 12, 24),
         "bg_bottom": (28, 18, 44),
@@ -157,8 +168,16 @@ KEYWORDS_TO_THEME = {
 
 
 def theme_for(archetype: str) -> dict:
+    """
+    Возвращает тему для архетипа.
+    Приоритет: legendary (по точному списку) → keyword → default.
+    """
+    if is_legendary(archetype):
+        return THEMES["legendary"]
+
     if not archetype:
         return THEMES["default"]
+
     text = archetype.lower()
     for keyword, theme_name in KEYWORDS_TO_THEME.items():
         if keyword in text:
@@ -167,8 +186,16 @@ def theme_for(archetype: str) -> dict:
 
 
 def theme_name_for(archetype: str) -> str:
+    """
+    Возвращает имя темы (для отладки / аналитики).
+    Приоритет: legendary → keyword → default.
+    """
+    if is_legendary(archetype):
+        return "legendary"
+
     if not archetype:
         return "default"
+
     text = archetype.lower()
     for keyword, theme_name in KEYWORDS_TO_THEME.items():
         if keyword in text:
@@ -178,11 +205,16 @@ def theme_name_for(archetype: str) -> str:
 
 def tag_for_archetype(archetype: str) -> str:
     """
-    Возвращает тег вместо #default.
-    Берёт первые 1-2 слова архетипа.
+    Возвращает тег для share-текста.
+    Для легендарки — фиксированный #легендарный_вайб.
+    Для обычных — первые 1-2 слова архетипа.
     """
+    if is_legendary(archetype):
+        return "#легендарный_вайб"
+
     if not archetype:
         return "#вайб"
+
     words = archetype.split()[:2]
     tag = "_".join(w.lower() for w in words)
     # Убираем всё кроме букв и _

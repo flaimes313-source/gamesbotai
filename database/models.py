@@ -508,6 +508,13 @@ class UserEngagement(Base):
     total_shares: Mapped[int] = mapped_column(Integer, default=0)
     total_referrals: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Легендарные архетипы.
+    # Дата последнего выпадения легендарки (для cooldown 7 дней).
+    # NULL = юзер ещё не получал легендарных.
+    last_legendary_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

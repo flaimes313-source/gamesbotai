@@ -1,9 +1,17 @@
 """
 Генератор карточек «Вайбми».
 Работает на Python 3.7+. Иконки вшиты в base64.
+
+Правка: поддержка ЛЕГЕНДАРНЫХ архетипов.
+- Параметр is_legendary: bool = False.
+- При True — золотая рамка, золотые свечения,
+  значок «ЛЕГЕНДАРНЫЙ» и особый заголовок.
+- Тема 'legendary' подбирается автоматически через
+  themes.theme_for(), т.к. архетип уже легендарный.
 """
 import io
 import logging
+import math
 from io import BytesIO
 from typing import Any, Dict, Optional
 
@@ -86,6 +94,96 @@ def _text_width(draw, text, font):
     return bbox[2] - bbox[0]
 
 
+def _draw_star(draw, cx: int, cy: int, size: int, color, points: int = 5):
+    """
+    Рисует звёздочку (для значка «легендарный»).
+    Без PNG, чистым Polygon — чтобы не плодить base64.
+    """
+    inner = size * 0.42
+    coords = []
+    for i in range(points * 2):
+        angle = math.pi / 2 * 3 + i * math.pi / points
+        r = size if i % 2 == 0 else inner
+        x = cx + r * math.cos(angle)
+        y = cy - r * math.sin(angle)
+        coords.append((x, y))
+    draw.polygon(coords, fill=color)
+
+
+def _draw_legendary_border(img: Image.Image, accent, accent2, width: int = 10):
+    """
+    Рисует золотую рамку по периметру карточки.
+    Внутренняя линия — accent2, внешняя — accent.
+    Рисуется поверх всего в самом конце.
+    """
+    draw = ImageDraw.Draw(img)
+    # Внешний контур
+    draw.rectangle(
+        [(0, 0), (CARD_W - 1, CARD_H - 1)],
+        outline=(accent[0], accent[1], accent[2], 255),
+        width=width,
+    )
+    # Внутренняя тонкая линия для «двойной» рамки
+    inset = width + 4
+    draw.rectangle(
+        [(inset, inset), (CARD_W - 1 - inset, CARD_H - 1 - inset)],
+        outline=(accent2[0], accent2[1], accent2[2], 180),
+        width=2,
+    )
+
+
+def _draw_legendary_badge(img: Image.Image, theme, top: int = 130, right_pad: int = 60):
+    """
+    Рисует плашку «✨ ЛЕГЕНДАРНЫЙ» в правом верхнем углу.
+    top — вертикальная позиция под хэштегом.
+    """
+    draw = ImageDraw.Draw(img)
+
+    font_badge = _load_font(18, bold=True)
+    badge_text = "ЛЕГЕНДАРНЫЙ"
+
+    text_w = _text_width(draw, badge_text, font_badge)
+    bbox = draw.textbbox((0, 0), badge_text, font=font_badge)
+    text_h = bbox[3] - bbox[1]
+
+    star_size = 12
+    star_gap = 10
+    pad_x = 18
+    pad_y = 10
+
+    badge_w = pad_x * 2 + star_size * 2 + star_gap * 2 + text_w
+    badge_h = pad_y * 2 + max(text_h, star_size * 2)
+
+    x2 = CARD_W - right_pad
+    x1 = x2 - badge_w
+    y1 = top
+    y2 = y1 + badge_h
+
+    # Плашка
+    overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay)
+    odraw.rounded_rectangle(
+        [(x1, y1), (x2, y2)],
+        radius=14,
+        fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 55),
+        outline=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 240),
+        width=2,
+    )
+    img.alpha_composite(overlay)
+
+    # Звёздочки
+    star_cy = (y1 + y2) // 2
+    star1_cx = x1 + pad_x + star_size
+    star2_cx = x1 + pad_x + star_size * 2 + star_gap + star_size
+    _draw_star(draw, star1_cx, star_cy, star_size, theme["accent"])
+    _draw_star(draw, star2_cx, star_cy, star_size, theme["accent2"])
+
+    # Текст
+    text_x = x1 + pad_x + star_size * 2 + star_gap * 2
+    text_y = y1 + pad_y
+    draw.text((text_x, text_y), badge_text, font=font_badge, fill=theme["accent"])
+
+
 # ============================================================
 # Основная функция
 # ============================================================
@@ -93,28 +191,49 @@ def generate_card(
     profile: Dict[str, Any],
     username: Optional[str] = None,
     bot_username: Optional[str] = None,
+    is_legendary: bool = False,
 ) -> bytes:
     archetype = str(profile.get("archetype", "ТВОЙ АРХЕТИП")).upper()
     theme = theme_for(archetype)
     theme_name = theme_name_for(archetype)
     hashtag = tag_for_archetype(archetype)
-    _logger.info(f"[CARDS] theme={theme_name} archetype='{archetype}' tag={hashtag}")
+
+    # Если передан is_legendary=True, но тема не legendary
+    # (например, архетип не входит в список — защита) —
+    # принудительно берём legendary тему.
+    if is_legendary and theme_name != "legendary":
+        from services.cards.themes import THEMES
+        theme = THEMES["legendary"]
+        theme_name = "legendary"
+
+    _logger.info(
+        f"[CARDS] theme={theme_name} archetype='{archetype}' "
+        f"tag={hashtag} legendary={is_legendary}"
+    )
 
     # === Фон ===
     img = Image.new("RGB", (CARD_W, CARD_H), theme["bg_top"])
     _draw_gradient(img, theme["bg_top"], theme["bg_bottom"])
     img = img.convert("RGBA")
 
-    _draw_glow_circle(img, (150, 150), 250, theme["accent"], alpha=40)
-    _draw_glow_circle(img, (CARD_W - 100, CARD_H - 300), 280, theme["accent2"], alpha=30)
-    _draw_glow_circle(img, (CARD_W - 200, 400), 150, theme["accent"], alpha=20)
+    # Свечения: при легендарке — усиленные золотые
+    if is_legendary:
+        _draw_glow_circle(img, (150, 150), 300, theme["accent"], alpha=65)
+        _draw_glow_circle(img, (CARD_W - 100, CARD_H - 300), 320, theme["accent2"], alpha=50)
+        _draw_glow_circle(img, (CARD_W - 200, 400), 200, theme["accent"], alpha=40)
+        _draw_glow_circle(img, (200, CARD_H - 200), 220, theme["accent2"], alpha=35)
+    else:
+        _draw_glow_circle(img, (150, 150), 250, theme["accent"], alpha=40)
+        _draw_glow_circle(img, (CARD_W - 100, CARD_H - 300), 280, theme["accent2"], alpha=30)
+        _draw_glow_circle(img, (CARD_W - 200, 400), 150, theme["accent"], alpha=20)
 
     draw = ImageDraw.Draw(img)
 
-    # Боковая полоса
+    # Боковая полоса (при легендарке — шире и золотая)
+    side_w = 8 if is_legendary else 4
     draw.rectangle(
-        [(0, 0), (4, CARD_H)],
-        fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 220),
+        [(0, 0), (side_w, CARD_H)],
+        fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 230),
     )
 
     # === ШАПКА ===
@@ -133,12 +252,21 @@ def generate_card(
         fill=theme["accent"],
     )
 
-    # === МОЙ АРХЕТИП ===
+    # Значок «ЛЕГЕНДАРНЫЙ» — под хэштегом
+    if is_legendary:
+        _draw_legendary_badge(img, theme, top=100, right_pad=60)
+
+    # === МОЙ АРХЕТИП (или ЛЕГЕНДАРНЫЙ АРХЕТИП) ===
     font_label = _load_font(22, bold=False)
-    label_text = "М О Й   А Р Х Е Т И П"
+    if is_legendary:
+        label_text = "Л Е Г Е Н Д А Р Н Ы Й   А Р Х Е Т И П"
+    else:
+        label_text = "М О Й   А Р Х Е Т И П"
+
     label_w = _text_width(draw, label_text, font_label)
+    label_y = 200 if is_legendary else 180
     draw.text(
-        ((CARD_W - label_w) // 2, 180),
+        ((CARD_W - label_w) // 2, label_y),
         label_text,
         font=font_label,
         fill=theme["subtext"],
@@ -152,7 +280,7 @@ def generate_card(
 
     arch_w = _text_width(draw, archetype, font_archetype)
     arch_x = (CARD_W - arch_w) // 2
-    arch_y = 240
+    arch_y = 260 if is_legendary else 240
 
     bbox = draw.textbbox((0, 0), archetype, font=font_archetype)
     arch_h = bbox[3] - bbox[1]
@@ -163,16 +291,41 @@ def generate_card(
         (arch_x + arch_w + padding_x, arch_y + arch_h + padding_y + 10),
     ]
 
-    overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(overlay)
-    odraw.rounded_rectangle(
-        plate_box,
-        radius=22,
-        fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 40),
-        outline=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 220),
-        width=3,
-    )
-    img.alpha_composite(overlay)
+    # Двойная обводка плашки архетипа при легендарке
+    if is_legendary:
+        overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
+        odraw = ImageDraw.Draw(overlay)
+        # Внешняя золотая
+        odraw.rounded_rectangle(
+            plate_box,
+            radius=24,
+            fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 55),
+            outline=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 255),
+            width=4,
+        )
+        # Внутренняя тонкая
+        inner_box = [
+            (plate_box[0][0] + 8, plate_box[0][1] + 8),
+            (plate_box[1][0] - 8, plate_box[1][1] - 8),
+        ]
+        odraw.rounded_rectangle(
+            inner_box,
+            radius=18,
+            outline=(theme["accent2"][0], theme["accent2"][1], theme["accent2"][2], 200),
+            width=2,
+        )
+        img.alpha_composite(overlay)
+    else:
+        overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
+        odraw = ImageDraw.Draw(overlay)
+        odraw.rounded_rectangle(
+            plate_box,
+            radius=22,
+            fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 40),
+            outline=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 220),
+            width=3,
+        )
+        img.alpha_composite(overlay)
 
     draw.text((arch_x, arch_y), archetype, font=font_archetype, fill=theme["text"])
 
@@ -192,7 +345,8 @@ def generate_card(
     font_label_name = _load_font(26)
     font_score = _load_font(32, bold=True)
 
-    y = 460
+    # Сдвигаем блок характеристик вниз, если легендарка (там больше шапка)
+    y = 480 if is_legendary else 460
     icon_size = 40
     text_x = 60 + icon_size + 15
     bar_x = 420
@@ -383,6 +537,10 @@ def generate_card(
         [(0, CARD_H - 4), (CARD_W, CARD_H)],
         fill=(theme["accent"][0], theme["accent"][1], theme["accent"][2], 255),
     )
+
+    # === ЛЕГЕНДАРНАЯ РАМКА — поверх всего ===
+    if is_legendary:
+        _draw_legendary_border(img, theme["accent"], theme["accent2"], width=10)
 
     buf = BytesIO()
     img.convert("RGB").save(buf, format="PNG", optimize=True)

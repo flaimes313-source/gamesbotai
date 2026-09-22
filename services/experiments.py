@@ -12,9 +12,26 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================
 # Реестр экспериментов: имя → список версий
+#
+# photo_prompt:
+#   - photo_v1 — базовый промт (короткий, без деталей).
+#   - photo_v2 — расширенный, с деталями и дерзким стилем.
+#   - photo_v3 — эпичные названия архетипов + явный запрет
+#                генерить «легендарные» имена (за них
+#                отвечает бэк, см. services/analysis/rarity.py).
+#
+# ВАЖНО:
+#   - Назначение варианта СТАБИЛЬНО на telegram_id (md5).
+#   - Уже назначенные юзеры НЕ переезжают при изменении списка.
+#   - Новые юзеры распределяются по всем трём вариантам.
+#   - Чтобы «схлопнуть» до одного — просто удали лишние
+#     из списка ниже (старые останутся в БД, но новые
+#     анализы пойдут только по актуальным).
+# ============================================================
 EXPERIMENTS = {
-    "photo_prompt": ["photo_v1", "photo_v2"],
+    "photo_prompt": ["photo_v1", "photo_v2", "photo_v3"],
 }
 
 
@@ -69,10 +86,25 @@ async def get_variant(
 def pick_prompt_by_variant(variant: str) -> tuple[str, str]:
     """
     Возвращает (prompt_text, prompt_version) для указанного варианта.
+
+    Если вариант устарел (его больше нет в EXPERIMENTS, но
+    он сохранён в БД у старого юзера) — отдаём v3 как
+    актуальный дефолт. Это защищает от KeyError и от
+    ситуации, когда юзер «завис» на удалённой ветке.
     """
+    if variant == "photo_v3":
+        from prompts.photo_analysis_v3 import PHOTO_ANALYSIS_PROMPT_V3
+        return PHOTO_ANALYSIS_PROMPT_V3, "photo_v3"
+
     if variant == "photo_v2":
         from prompts.photo_analysis_v2 import PHOTO_ANALYSIS_PROMPT_V2
         return PHOTO_ANALYSIS_PROMPT_V2, "photo_v2"
 
-    from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
-    return PHOTO_ANALYSIS_PROMPT, "photo_v1"
+    if variant == "photo_v1":
+        from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
+        return PHOTO_ANALYSIS_PROMPT, "photo_v1"
+
+    # Неизвестный/устаревший вариант → актуальный дефолт
+    logger.warning(f"Unknown prompt variant '{variant}', fallback to photo_v3")
+    from prompts.photo_analysis_v3 import PHOTO_ANALYSIS_PROMPT_V3
+    return PHOTO_ANALYSIS_PROMPT_V3, "photo_v3"
