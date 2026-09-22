@@ -58,6 +58,9 @@ try:
     _log_boot("Importing tops_sender...")
     from services.notifications.tops_sender import tops_loop
 
+    _log_boot("Importing weekly vibe sender...")
+    from services.notifications.vibe_weekly import weekly_vibe_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -181,6 +184,12 @@ async def main() -> None:
         asyncio.create_task(tops_loop(bot))
     except Exception:
         logger.exception("Failed to start tops loop")
+
+    logger.info("Starting weekly vibe loop...")
+    try:
+        asyncio.create_task(weekly_vibe_loop(bot))
+    except Exception:
+        logger.exception("Failed to start weekly vibe loop")
 
     logger.info("Polling started.")
     try:
