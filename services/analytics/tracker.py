@@ -90,12 +90,16 @@ EVENT_NAMES = {
     "dynamics_viewed",
 
     # Легендарные архетипы (Шаг 1.2)
-    # legendary_archetype — выпал легендарный архетип (бэк подменил
-    #   обычный на легендарный с шансом ~3%).
-    # legendary_achievement — получено достижение за легендарку:
-    #   first_legendary (первая) или five_legendaries (5 разных).
+    # legendary_archetype — выпал легендарный архетип
+    # legendary_achievement — выдано достижение за легендарку
     "legendary_archetype",
     "legendary_achievement",
+
+    # Вайб-отчёт (Шаг 1.3)
+    # vibe_report_viewed — юзер открыл/обновил отчёт по запросу
+    # vibe_weekly_sent — недельная сводка отправлена юзеру
+    "vibe_report_viewed",
+    "vibe_weekly_sent",
 
     # Старые события (для совместимости)
     "message_sent",

@@ -15,6 +15,7 @@ from prompts.message_helper import MESSAGE_HELPER_PROMPT
 from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
 from prompts.test_question import TEST_QUESTION_PROMPT
 from prompts.test_result import TEST_RESULT_PROMPT
+from prompts.vibe_report import VIBE_REPORT_PROMPT, VIBE_WEEKLY_PROMPT
 from services.ai.base import AIProvider
 from utils.logging import get_logger
 
@@ -46,20 +47,9 @@ def _try_fix_json(text: str) -> str:
     """
     Автопочинка частых ошибок LLM в JSON:
 
-    1. Пропущенная запятая между двумя строками в массиве:
-       "текст1"
-       "текст2"
-       → "текст1",
-         "текст2"
-
-    2. Висящая запятая перед закрывающей скобкой:
-       ["a", "b",]
-       → ["a", "b"]
-
+    1. Пропущенная запятая между двумя строками в массиве.
+    2. Висящая запятая перед закрывающей скобкой.
     3. Одинарные кавычки вокруг ключей/значений (простой случай).
-
-    4. Управляющие символы (переносы строк) внутри строк не трогаем —
-       их парсер и так скушает.
     """
     s = text
 
@@ -67,11 +57,6 @@ def _try_fix_json(text: str) -> str:
     s = re.sub(r",(\s*[}\]])", r"\1", s)
 
     # 2. Добавляем запятую между двумя строками в массиве.
-    #    Ищем: закрывающая кавычка, опциональные пробелы/новые строки,
-    #    потом сразу открывающая кавычка без запятой между ними.
-    #    Работает для случаев:
-    #       "текст1"
-    #       "текст2"
     s = re.sub(r'"\s*\n\s*"', '",\n    "', s)
 
     # 3. Иногда пропущена запятая в одной строке: "...текст" "текст..."
@@ -86,7 +71,7 @@ def _extract_json(text: str) -> Dict[str, Any]:
     Пробуем несколько стратегий:
     1. Как есть.
     2. Отрезаем первый {...} блок и парсим.
-    3. Пробуем починить типичные ошибки (пропущенные запятые) и парсить снова.
+    3. Пробуем починить типичные ошибки и парсить снова.
     """
     if not text:
         raise ValueError("Empty AI response")
@@ -118,6 +103,60 @@ def _extract_json(text: str) -> Dict[str, Any]:
             f"Could not parse AI JSON after fix: {e2}. "
             f"Raw preview: {json_str[:200]}"
         )
+
+
+# ============================================================
+# Утилита: разбор текстового ответа вайб-отчёта
+# ============================================================
+def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
+    """
+    GigaChat для вайб-отчёта возвращает ТЕКСТ (не JSON).
+    Формат ответа промта:
+
+        [SUMMARY]
+        короткая фраза для картинки
+
+        [REPORT]
+        основной текст отчёта
+
+        [RECOMMENDATION]
+        одна рекомендация
+    """
+    text = (raw or "").strip()
+
+    summary = ""
+    report = text
+    recommendation = ""
+
+    # [SUMMARY]
+    m = re.search(r"\[SUMMARY\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        summary = m.group(1).strip()
+
+    # [REPORT]
+    m = re.search(r"\[REPORT\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        report = m.group(1).strip()
+
+    # [RECOMMENDATION]
+    m = re.search(r"\[RECOMMENDATION\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        recommendation = m.group(1).strip()
+
+    # Fallback: если ни один маркер не найден — считаем весь текст отчётом
+    if not summary and not report and not recommendation:
+        report = text
+
+    # Если summary пуст — берём первое предложение отчёта
+    if not summary and report:
+        first_sentence = re.split(r"[.!?]\s", report, maxsplit=1)[0]
+        summary = (first_sentence[:120] + "…") if len(first_sentence) > 120 else first_sentence
+
+    return {
+        "text": report,
+        "summary": summary,
+        "recommendation": recommendation,
+    }
 
 
 # ============================================================
@@ -434,3 +473,112 @@ class GigaChatProvider(AIProvider):
             max_tokens=500,
             log_tag="CHAT_ANALYZE",
         )
+
+    # --------------------------------------------------------
+    # Вайб-отчёт (Шаг 1.3)
+    # --------------------------------------------------------
+    async def generate_vibe_report(
+        self,
+        profile_data: Dict[str, Any],
+        weekly: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Генерирует персональный вайб-отчёт.
+
+        weekly=False → портрет (по запросу из профиля).
+        weekly=True  → сводка за неделю (для авто-рассылки).
+
+        Возвращает: {"text": str, "summary": str, "recommendation": str}.
+        GigaChat возвращает ТЕКСТ (не JSON), разбираем по маркерам
+        [SUMMARY], [REPORT], [RECOMMENDATION].
+        """
+        user = profile_data.get("user", {})
+        profiles = profile_data.get("profiles", []) or []
+        stats = profile_data.get("stats", {}) or {}
+        weekly_data = profile_data.get("weekly", {}) or {}
+        tops = profile_data.get("tops", {}) or {}
+        recommendations = profile_data.get("recommendations", []) or []
+
+        # --- Профили: список архетипов + характеристики ---
+        profiles_lines = []
+        for p in profiles[:10]:  # не больше 10 последних — иначе промт раздуется
+            arch = p.get("archetype", "")
+            scores = p.get("scores", {}) or {}
+            scores_str = ", ".join(
+                f"{k}={v}" for k, v in scores.items() if isinstance(v, int)
+            )
+            vibe = p.get("vibe", "")
+            profiles_lines.append(
+                f"- «{arch}» ({vibe}) [{scores_str}]"
+            )
+        profiles_text = "\n".join(profiles_lines) if profiles_lines else "(нет)"
+
+        # --- Топы ---
+        tops_lines = []
+        if tops.get("charisma_pct") is not None:
+            tops_lines.append(f"харизма — топ-{tops['charisma_pct']}%")
+        if tops.get("chaos_pct") is not None:
+            tops_lines.append(f"хаос — топ-{tops['chaos_pct']}%")
+        if tops.get("humor_pct") is not None:
+            tops_lines.append(f"юмор — топ-{tops['humor_pct']}%")
+        if tops.get("points_pct") is not None:
+            tops_lines.append(f"очки — топ-{tops['points_pct']}%")
+        tops_text = "; ".join(tops_lines) if tops_lines else "нет данных"
+
+        # --- Рекомендации (что предложить юзеру) ---
+        recs_lines = []
+        for r in recommendations[:3]:
+            title = r.get("title", "")
+            rtype = r.get("type", "")
+            if title:
+                recs_lines.append(f"- {rtype}: {title}")
+        recs_text = "\n".join(recs_lines) if recs_lines else "(нет)"
+
+        # --- Промт ---
+        template = VIBE_WEEKLY_PROMPT if weekly else VIBE_REPORT_PROMPT
+
+        prompt = template.format(
+            user_name=user.get("first_name", "Игрок"),
+            user_username=user.get("username") or "",
+            total_analyses=stats.get("total_analyses", 0),
+            total_points=stats.get("total_points", 0),
+            level=stats.get("level", 1),
+            level_title=stats.get("title", ""),
+            current_streak=stats.get("current_streak", 0),
+            max_streak=stats.get("max_streak", 0),
+            total_messages=stats.get("total_messages", 0),
+            total_tests=stats.get("total_tests", 0),
+            total_shares=stats.get("total_shares", 0),
+            total_referrals=stats.get("total_referrals", 0),
+            unique_archetypes=stats.get("unique_archetypes", 0),
+            legendary_count=stats.get("legendary_count", 0),
+            profiles_text=profiles_text,
+            tops_text=tops_text,
+            recommendations_text=recs_text,
+            # Недельные метрики
+            active_days=weekly_data.get("active_days", 0),
+            weekly_analyses=weekly_data.get("analyses", 0),
+            weekly_messages=weekly_data.get("messages", 0),
+            weekly_shares=weekly_data.get("shares", 0),
+            weekly_tests=weekly_data.get("tests", 0),
+            weekly_points=weekly_data.get("points_gained", 0),
+            streak_start=weekly_data.get("streak_start", 0),
+            streak_end=weekly_data.get("streak_end", 0),
+        )
+
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+
+        raw = await self._chat(
+            messages,
+            temperature=0.85,
+            max_tokens=1400,
+        )
+        logger.info(f"[VIBE] raw len={len(raw)} weekly={weekly}")
+
+        parsed = _parse_vibe_report_text(raw)
+        logger.info(
+            f"[VIBE] parsed: summary_len={len(parsed['summary'])}, "
+            f"text_len={len(parsed['text'])}, "
+            f"rec_len={len(parsed['recommendation'])}"
+        )
+        return parsed
