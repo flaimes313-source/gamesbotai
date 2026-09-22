@@ -14,6 +14,10 @@ def info_menu_kb() -> InlineKeyboardMarkup:
                 callback_data="info_points",
             )],
             [InlineKeyboardButton(
+                text="✨ Легендарные архетипы",
+                callback_data="info_legendary",
+            )],
+            [InlineKeyboardButton(
                 text="💎 Как получить PRO бесплатно",
                 callback_data="info_free_pro",
             )],
