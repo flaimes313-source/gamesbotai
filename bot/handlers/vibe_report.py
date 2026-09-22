@@ -7,7 +7,13 @@
 Возвращает:
 - либо AI-текст отчёта (HTML) + inline-кнопки,
 - либо заглушку «Сделай ещё N анализов».
+
+UX:
+- Пока AI генерит — «печатает…» в шапке чата.
+- Статус обновляется каждые 4 сек (Telegram сбрасывает через 5).
 """
+
+import asyncio
 
 from aiogram import F, Router
 from aiogram.types import (
@@ -38,7 +44,7 @@ def _report_kb() -> InlineKeyboardMarkup:
     Кнопки под текстом отчёта:
     - «Обновить» → перегенерит отчёт (callback тот же).
     - «Поделиться» → общая логика шара (share_profile).
-    - «В профиль» → назад.
+    - «В профиль» → возврат в профиль (my_profile).
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -59,11 +65,34 @@ def _report_kb() -> InlineKeyboardMarkup:
 
 
 # ============================================================
+# Фоновая задача: держим «печатает…»
+# ============================================================
+async def _keep_typing(bot, chat_id: int, action: str = "typing"):
+    """
+    Обновляет chat_action каждые 4 секунды, пока не отменят.
+    Telegram сбрасывает статус через ~5 сек — поэтому 4 безопасно.
+    """
+    try:
+        while True:
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action=action)
+            except Exception:
+                # Тихо игнорим — если не получилось, не валим основной поток.
+                pass
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        # Нормальное завершение — просто выходим.
+        pass
+
+
+# ============================================================
 # Хендлер
 # ============================================================
 @router.callback_query(F.data == "vibe_report")
 async def cb_vibe_report(callback: CallbackQuery):
     await callback.answer("Готовлю отчёт…")
+
+    chat_id = callback.message.chat.id
 
     # Ищем юзера
     async with async_session() as session:
@@ -77,15 +106,22 @@ async def cb_vibe_report(callback: CallbackQuery):
         )
         return
 
+    # --- Запускаем «печатает…» на время работы AI ---
+    typing_task = asyncio.create_task(_keep_typing(callback.bot, chat_id, "typing"))
+
     # Генерим отчёт
     try:
         report = await build_vibe_report(user.id, weekly=False)
     except Exception:
         logger.exception("[VIBE] handler build_vibe_report failed")
+        typing_task.cancel()
         await callback.message.answer(
             "😔 Не удалось собрать отчёт. Попробуй позже."
         )
         return
+    finally:
+        # Отменяем «печатает» в любом случае
+        typing_task.cancel()
 
     # Мало анализов — заглушка
     if not report.get("available"):
@@ -115,6 +151,11 @@ async def cb_vibe_report(callback: CallbackQuery):
 
     # Заголовок
     header = "🧠 <b>МОЙ ВАЙБ-ОТЧЁТ</b>\n\n"
+
+    # --- Финальный штрих: показываем «отправляет…» 1.5 сек перед отчётом ---
+    upload_task = asyncio.create_task(_keep_typing(callback.bot, chat_id, "upload_document"))
+    await asyncio.sleep(1.5)
+    upload_task.cancel()
 
     try:
         await callback.message.answer(
