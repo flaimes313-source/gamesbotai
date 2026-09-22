@@ -101,13 +101,23 @@ async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
 
 
 # ============================================================
-# REPLY-КНОПКИ
+# ОБЩАЯ ФУНКЦИЯ ПОКАЗА ПРОФИЛЯ
 # ============================================================
-@router.message(F.text == "👤 Мой профиль")
-async def show_profile(message: Message):
-    user, profile = await _latest_profile(message.from_user.id)
+async def _render_and_send_profile(target) -> None:
+    """
+    Показывает профиль. target — Message или CallbackQuery.
+    Используется и для текстовой кнопки, и для callback my_profile.
+    """
+    if isinstance(target, CallbackQuery):
+        telegram_id = target.from_user.id
+        send = target.message.answer
+    else:
+        telegram_id = target.from_user.id
+        send = target.answer
+
+    user, profile = await _latest_profile(telegram_id)
     if profile is None or user is None:
-        await message.answer(
+        await send(
             "У тебя пока нет профиля. Отправь фото 📸 чтобы пройти первый анализ!"
         )
         return
@@ -131,10 +141,18 @@ async def show_profile(message: Message):
     except Exception:
         logger.exception("Engagement fetch failed")
 
-    await message.answer(
+    await send(
         _profile_text(user, profile, engagement_line),
         reply_markup=profile_kb(),
     )
+
+
+# ============================================================
+# REPLY-КНОПКИ
+# ============================================================
+@router.message(F.text == "👤 Мой профиль")
+async def show_profile(message: Message):
+    await _render_and_send_profile(message)
 
 
 @router.message(F.text == "📤 Поделиться")
@@ -215,7 +233,6 @@ async def _send_dynamics_chart(callback: CallbackQuery, dyn: dict):
     period = dyn.get("period") or {}
     period_str = format_period(period.get("first"), period.get("last"))
 
-    # Последний архетип (для выбора темы)
     archetypes = dyn.get("archetypes") or []
     archetype = archetypes[-1] if archetypes else None
 
@@ -254,7 +271,6 @@ def _render_dynamics_text(dyn: dict) -> str:
     lines.append("━" * 15)
     lines.append("")
 
-    # Топ-2 с прогресс-барами
     for field_key, data in top:
         label = data.get("label", field_key)
         first_val = data.get("first", 0)
@@ -267,7 +283,6 @@ def _render_dynamics_text(dyn: dict) -> str:
         lines.append(f"<code>{bar}</code>")
         lines.append("")
 
-    # Остальные — компактно
     if others:
         lines.append("━" * 15)
         lines.append("")
@@ -287,6 +302,13 @@ def _render_dynamics_text(dyn: dict) -> str:
 # ============================================================
 # CALLBACK-ХЕНДЛЕРЫ
 # ============================================================
+@router.callback_query(F.data == "my_profile")
+async def cb_my_profile(callback: CallbackQuery):
+    """Возврат в профиль из отчёта."""
+    await callback.answer()
+    await _render_and_send_profile(callback)
+
+
 @router.callback_query(F.data == "share_profile")
 async def cb_share(callback: CallbackQuery):
     await callback.answer()
@@ -305,14 +327,12 @@ async def cb_settings(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_main")
 async def cb_back_to_main(callback: CallbackQuery):
+    """
+    Возврат в главное меню.
+    ВАЖНО: если сообщение — фото (карточка), edit_text упадёт.
+    Поэтому просто отправляем НОВОЕ сообщение с главным меню.
+    """
     await callback.answer()
-    try:
-        await callback.message.edit_text(
-            "🏠 <b>Главное меню</b>",
-            reply_markup=None,
-        )
-    except Exception:
-        pass
     await callback.message.answer(
         "🏠 Главное меню. Отправь фото или выбери пункт меню.",
         reply_markup=main_menu_kb(),
