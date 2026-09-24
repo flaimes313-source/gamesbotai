@@ -1,13 +1,6 @@
 """
 Единый сервис уведомлений (Этап 1 — инфраструктура).
 
-Зачем:
-- Сейчас у каждого типа уведомлений свой loop (daily_sender, chat_reminder,
-  premium_reminder, tops_sender, vibe_weekly). Это приводит к дублированию
-  логики (тихие часы, лимиты, проверки).
-- Hub централизует: настройки юзера, тихие часы, дневной лимит,
-  очередь отправки, идемпотентность.
-
 Использование:
     from services.notifications.hub import schedule_notification
 
@@ -15,14 +8,14 @@
         user_id=user.id,
         kind="horoscope",
         priority=3,
-        payload={"horoscope": "..."},
+        payload={"text": "..."},
+        tz_name=user.timezone,
     )
 
 Что НЕ делает hub:
-- Не генерирует контент (это делают сервисы фич: karma, horoscope, ...).
+- Не генерирует контент (это делают сервисы фич).
 - Не выбирает, кому слать (это решают сервисы-источники).
-- Не хранит очередь в БД (in-memory — при рестарте бота потеряется,
-  но это ок для «мягких» уведомлений).
+- Не хранит очередь в БД (in-memory).
 """
 
 from __future__ import annotations
@@ -51,23 +44,12 @@ logger = get_logger(__name__)
 # ============================================================
 # КОНСТАНТЫ
 # ============================================================
-
-# Максимум проактивных уведомлений в день (не считая ответов на действия).
 MAX_DAILY_PROACTIVE = 2
-
-# Тихие часы — используем существующий хелпер is_night_now.
-# Не шлём между 23:00 и 08:00 по TZ юзера.
-
-# Приоритеты: 1 — критично, 5 — можно пропустить.
-# Если дневной лимит уже набран, отбрасываются уведомления
-# с приоритетом >= 4.
 PRIORITY_DROP_THRESHOLD = 4
-
-# Интервал воркера
 WORKER_INTERVAL_SECONDS = 15 * 60  # 15 минут
 
+
 # Маппинг kind → ключ feature flag.
-# Если флаг выключен — уведомление не отправится.
 KIND_TO_FLAG: Dict[str, str] = {
     "daily_result": "daily_content_enabled",
     "horoscope": "horoscope_enabled",
@@ -76,10 +58,10 @@ KIND_TO_FLAG: Dict[str, str] = {
     "weekly_vibe": "weekly_vibe_enabled",
     "tops": "tops_enabled",
     "premium_reminder": "premium_reminder_enabled",
+    "chat_reminder": "chat_reminder_enabled",
 }
 
 # Маппинг kind → поле в UserNotificationSettings.
-# Если поле False — юзер отключил эту категорию.
 KIND_TO_SETTING: Dict[str, str] = {
     "daily_result": "daily_result_enabled",
     "horoscope": "horoscope_enabled",
@@ -88,9 +70,10 @@ KIND_TO_SETTING: Dict[str, str] = {
     "weekly_vibe": "weekly_vibe_enabled",
     "tops": "tops_enabled",
     "premium_reminder": "premium_reminder_enabled",
+    "chat_reminder": "chat_reminder_enabled",
 }
 
-# Маппинг kind → event name (для идемпотентности и аналитики).
+# Маппинг kind → event name.
 KIND_TO_EVENT: Dict[str, str] = {
     "daily_result": "daily_sent",
     "horoscope": "horoscope_sent",
@@ -99,13 +82,13 @@ KIND_TO_EVENT: Dict[str, str] = {
     "weekly_vibe": "vibe_weekly_sent",
     "tops": "tops_sent",
     "premium_reminder": "premium_reminder_sent",
+    "chat_reminder": "chat_reminder_sent",
 }
 
 
 # ============================================================
 # ОЧЕРЕДЬ (in-memory)
 # ============================================================
-# Структура: {user_id: [ {kind, priority, payload, enqueued_at}, ... ]}
 _queue: Dict[int, List[Dict[str, Any]]] = {}
 _queue_lock = asyncio.Lock()
 
@@ -116,7 +99,7 @@ _queue_lock = asyncio.Lock()
 async def get_notification_settings(user_id: int) -> Dict[str, bool]:
     """
     Возвращает настройки уведомлений юзера.
-    Если строки нет — создаёт с дефолтами и возвращает.
+    Если строки нет — создаёт с дефолтами.
     """
     async with async_session() as session:
         s = (await session.execute(
@@ -138,6 +121,7 @@ async def get_notification_settings(user_id: int) -> Dict[str, bool]:
             "weekly_vibe_enabled": s.weekly_vibe_enabled,
             "tops_enabled": s.tops_enabled,
             "premium_reminder_enabled": s.premium_reminder_enabled,
+            "chat_reminder_enabled": getattr(s, "chat_reminder_enabled", True),
         }
 
 
@@ -146,10 +130,7 @@ async def update_notification_setting(
     key: str,
     value: bool,
 ) -> bool:
-    """
-    Меняет один тумблер. Возвращает True, если получилось.
-    key — имя поля в UserNotificationSettings (например, "horoscope_enabled").
-    """
+    """Меняет один тумблер. Возвращает True, если получилось."""
     allowed = set(KIND_TO_SETTING.values())
     if key not in allowed:
         logger.warning(f"[HUB] unknown setting key: {key}")
@@ -176,10 +157,6 @@ async def update_notification_setting(
 # ПРОВЕРКИ ПЕРЕД ОТПРАВКОЙ
 # ============================================================
 async def _already_sent_today(user_id: int, kind: str) -> bool:
-    """
-    Проверяет через events, не отправляли ли сегодня это уведомление.
-    Защита от дублей при рестарте или повторных вызовах.
-    """
     event_name = KIND_TO_EVENT.get(kind)
     if not event_name:
         return False
@@ -203,10 +180,6 @@ async def _already_sent_today(user_id: int, kind: str) -> bool:
 
 
 async def _count_sent_today(user_id: int) -> int:
-    """
-    Считает, сколько проактивных уведомлений ушло сегодня.
-    Считает только те, что в KIND_TO_EVENT (т.е. через hub).
-    """
     event_names = list(KIND_TO_EVENT.values())
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -234,17 +207,7 @@ async def can_send_now(
 ) -> tuple[bool, str]:
     """
     Проверяет, можно ли отправить уведомление сейчас.
-
-    Возвращает (allowed, reason):
-        allowed=True  — можно слать.
-        allowed=False — reason объясняет, почему нет.
-
-    Проверки:
-    1. Feature flag (глобально выключено?).
-    2. Настройки юзера (категория отключена?).
-    3. Тихие часы (23:00–08:00 по TZ).
-    4. Дневной лимит (MAX_DAILY_PROACTIVE).
-    5. Дубли (уже слали сегодня?).
+    Возвращает (allowed, reason).
     """
     # 1. Feature flag
     flag_key = KIND_TO_FLAG.get(kind)
@@ -268,10 +231,8 @@ async def can_send_now(
     # 4. Дневной лимит
     sent_today = await _count_sent_today(user_id)
     if sent_today >= MAX_DAILY_PROACTIVE:
-        # Если приоритет низкий — отбрасываем
         if priority >= PRIORITY_DROP_THRESHOLD:
             return False, "daily_limit_low_priority"
-        # Если высокий — всё равно шлём, но помечаем
         return True, "daily_limit_but_high_priority"
 
     # 5. Дубли
@@ -293,21 +254,11 @@ async def schedule_notification(
 ) -> bool:
     """
     Ставит уведомление в очередь.
-
-    Параметры:
-        user_id — кому.
-        kind — тип (horoscope, secret_feature, profile_views, ...).
-        priority — 1 (высокий) .. 5 (низкий).
-        payload — данные для отправки (текст, кнопки, и т.п.).
-        tz_name — TZ юзера (если есть; иначе возьмём из БД в воркере).
-
-    Возвращает True, если принято в очередь.
+    Возвращает True, если принято.
     """
     if not user_id:
         return False
 
-    # Проверка can_send_now — быстрый фильтр.
-    # Если tz_name не передан — воркер сам проверит.
     if tz_name:
         allowed, reason = await can_send_now(
             user_id, kind, priority, tz_name
@@ -332,17 +283,13 @@ async def schedule_notification(
 
 
 # ============================================================
-# ОТПРАВКА ОДНОГО УВЕДОМЛЕНИЯ
+# ОТПРАВКА
 # ============================================================
 async def _send_notification(
     bot: Bot,
     user: User,
     item: Dict[str, Any],
 ) -> bool:
-    """
-    Отправляет одно уведомление из очереди.
-    Возвращает True, если успешно.
-    """
     kind = item["kind"]
     payload = item.get("payload", {})
     event_name = KIND_TO_EVENT.get(kind)
@@ -355,7 +302,6 @@ async def _send_notification(
         logger.warning(f"[HUB] empty payload for kind={kind} user={user.id}")
         return False
 
-    # Финальная проверка (TZ может быть известна только сейчас)
     allowed, reason = await can_send_now(
         user.id, kind, item.get("priority", 3), user.timezone
     )
@@ -382,7 +328,6 @@ async def _send_notification(
                 reply_markup=reply_markup,
             )
     except Exception as e:
-        # TelegramForbiddenError — юзер заблокировал
         from aiogram.exceptions import TelegramForbiddenError
         if isinstance(e, TelegramForbiddenError):
             async with async_session() as session:
@@ -397,7 +342,6 @@ async def _send_notification(
             logger.exception(f"[HUB] send failed user={user.id} kind={kind}")
         return False
 
-    # Track события
     try:
         from services.analytics.tracker import track
         if event_name:
@@ -416,19 +360,13 @@ async def _send_notification(
 # ВОРКЕР
 # ============================================================
 async def _process_queue(bot: Bot) -> int:
-    """
-    Проходит по очереди, отправляет готовые, чистит старые.
-    Возвращает количество отправленных.
-    """
     sent = 0
     now = datetime.now(timezone.utc)
 
-    # Снимок ключей
     async with _queue_lock:
         user_ids = list(_queue.keys())
 
     for user_id in user_ids:
-        # Достаём юзера
         async with async_session() as session:
             user = (await session.execute(
                 select(User).where(User.id == user_id)
@@ -439,14 +377,11 @@ async def _process_queue(bot: Bot) -> int:
                 _queue.pop(user_id, None)
             continue
 
-        # Обрабатываем элементы
         async with _queue_lock:
             items = _queue.get(user_id, [])
-            # Сортируем по приоритету (1 — выше)
             items = sorted(items, key=lambda x: x.get("priority", 3))
 
         for item in items:
-            # Слишком старые (больше 24 часов) — выбрасываем
             enq = item.get("enqueued_at")
             if enq and (now - enq) > timedelta(hours=24):
                 continue
@@ -454,16 +389,14 @@ async def _process_queue(bot: Bot) -> int:
             ok = await _send_notification(bot, user, item)
             if ok:
                 sent += 1
-                # После успешной отправки — пауза
                 await asyncio.sleep(0.05)
-            # Убираем из очереди в любом случае
+
             async with _queue_lock:
                 try:
                     _queue[user_id].remove(item)
                 except (ValueError, KeyError):
                     pass
 
-        # Если очередь юзера пуста — удаляем ключ
         async with _queue_lock:
             if user_id in _queue and not _queue[user_id]:
                 _queue.pop(user_id, None)
@@ -472,14 +405,14 @@ async def _process_queue(bot: Bot) -> int:
 
 
 async def notification_worker_loop(bot: Bot) -> None:
-    """
-    Бесконечный цикл: раз в WORKER_INTERVAL_SECONDS обрабатывает очередь.
-    """
     while True:
         try:
             sent = await _process_queue(bot)
             if sent:
-                logger.info(f"[HUB] worker sent={sent} queue_size={sum(len(v) for v in _queue.values())}")
+                logger.info(
+                    f"[HUB] worker sent={sent} "
+                    f"queue_size={sum(len(v) for v in _queue.values())}"
+                )
         except Exception:
             logger.exception("[HUB] worker iteration failed")
 
@@ -487,12 +420,11 @@ async def notification_worker_loop(bot: Bot) -> None:
 
 
 # ============================================================
-# УТИЛИТЫ ДЛЯ UI
+# UI
 # ============================================================
 def notifications_menu_kb(settings: Dict[str, bool]) -> InlineKeyboardMarkup:
     """
     Клавиатура настроек уведомлений.
-    settings — результат get_notification_settings(user_id).
     """
     def toggle(name: str, label: str, key: str) -> InlineKeyboardButton:
         mark = "✅" if settings.get(key, True) else "❌"
@@ -510,6 +442,7 @@ def notifications_menu_kb(settings: Dict[str, bool]) -> InlineKeyboardMarkup:
             [toggle("weekly_vibe", "🗓 Вайб-отчёт", "weekly_vibe_enabled")],
             [toggle("tops", "🏆 Топы", "tops_enabled")],
             [toggle("premium_reminder", "💎 PRO-напоминания", "premium_reminder_enabled")],
+            [toggle("chat_reminder", "💬 Напоминания о чате", "chat_reminder_enabled")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")],
         ]
     )

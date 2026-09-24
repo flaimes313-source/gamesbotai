@@ -477,7 +477,7 @@ class AIUsage(Base):
 
 
 # ============================================================
-# ENGAGEMENT (вовлечение)
+# ENGAGEMENT
 # ============================================================
 class UserEngagement(Base):
     __tablename__ = "user_engagement"
@@ -487,30 +487,23 @@ class UserEngagement(Base):
         ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
     )
 
-    # Стрик
     current_streak: Mapped[int] = mapped_column(Integer, default=0)
     max_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_visit_date: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
-    # Очки и уровень
     total_points: Mapped[int] = mapped_column(Integer, default=0)
     level: Mapped[int] = mapped_column(Integer, default=1)
 
-    # Коллекция архетипов (JSON: {archetype: count})
     archetypes_collected: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
 
-    # Активность
     total_analyses: Mapped[int] = mapped_column(Integer, default=0)
     total_messages: Mapped[int] = mapped_column(Integer, default=0)
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
     total_shares: Mapped[int] = mapped_column(Integer, default=0)
     total_referrals: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Легендарные архетипы.
-    # Дата последнего выпадения легендарки (для cooldown 7 дней).
-    # NULL = юзер ещё не получал легендарных.
     last_legendary_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -554,9 +547,6 @@ class UserChallenge(Base):
     )
 
 
-# ============================================================
-# REFERRAL REWARDS (учёт начислений за рефералов)
-# ============================================================
 class ReferralReward(Base):
     __tablename__ = "referral_rewards"
 
@@ -571,9 +561,6 @@ class ReferralReward(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-# ============================================================
-# REWARD CLAIMS (полученные награды — разовые)
-# ============================================================
 class RewardClaim(Base):
     __tablename__ = "reward_claims"
 
@@ -590,9 +577,6 @@ class RewardClaim(Base):
     )
 
 
-# ============================================================
-# WEEKLY CHALLENGES
-# ============================================================
 class WeeklyChallenge(Base):
     __tablename__ = "weekly_challenges"
 
@@ -626,9 +610,6 @@ class UserWeeklyChallenge(Base):
     )
 
 
-# ============================================================
-# QUESTS (цепочки заданий)
-# ============================================================
 class Quest(Base):
     __tablename__ = "quests"
 
@@ -678,14 +659,12 @@ class UserQuestProgress(Base):
 
 
 # ============================================================
-# NOTIFICATION SETTINGS (Этап 1 — Инфраструктура уведомлений)
+# NOTIFICATION SETTINGS
 # ============================================================
 class UserNotificationSettings(Base):
     """
     Тумблеры категорий уведомлений.
     Создаётся лениво — при первой попытке прочитать настройки юзера.
-    Значения по умолчанию: все включены, кроме `secret_feature`
-    (её включаем сразу, но по умолчанию — True, чтобы фича работала).
     """
     __tablename__ = "user_notification_settings"
 
@@ -694,7 +673,6 @@ class UserNotificationSettings(Base):
         ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
     )
 
-    # Категории — все по умолчанию включены
     daily_result_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     horoscope_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     secret_feature_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -702,6 +680,7 @@ class UserNotificationSettings(Base):
     weekly_vibe_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tops_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     premium_reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    chat_reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -710,15 +689,12 @@ class UserNotificationSettings(Base):
 
 
 # ============================================================
-# PROFILE VIEWS (лог просмотров профилей)
+# PROFILE VIEWS
 # ============================================================
 class ProfileView(Base):
     """
     Лог того, кто смотрел чей профиль.
-    Источники (source): matching / compare / tops / search.
-    Используется для:
-    - фичи «Кто-то посмотрел твой профиль» (косвенно),
-    - аналитики.
+    Источники: matching / compare / tops / search.
     """
     __tablename__ = "profile_views"
 
@@ -736,13 +712,11 @@ class ProfileView(Base):
 
 
 # ============================================================
-# HOROSCOPES (кэш гороскопов)
+# HOROSCOPES
 # ============================================================
 class Horoscope(Base):
     """
     Кэш гороскопов. Один гороскоп на (user_id, date).
-    Генерится через AI 1 раз, хранится в БД, чтобы при повторной
-    отправке не тратить токены.
     """
     __tablename__ = "horoscopes"
 

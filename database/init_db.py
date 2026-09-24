@@ -43,7 +43,7 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_user_id ON user_weekly_challenges (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_challenge_id ON user_weekly_challenges (challenge_id);",
 
-    # Quests — миграция колонки step_progress (для уже созданной таблицы)
+    # Quests — миграция колонки step_progress
     "ALTER TABLE user_quest_progress ADD COLUMN IF NOT EXISTS step_progress INTEGER NOT NULL DEFAULT 0;",
 
     # Quests — индексы
@@ -52,8 +52,6 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_quest_id ON user_quest_progress (quest_id);",
 
     # Legendary archetypes (Шаг 1.2)
-    # Дата последнего выпадения легендарного архетипа.
-    # NULL = юзер ещё не получал легендарных.
     "ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS last_legendary_at TIMESTAMPTZ;",
 
     # ============================================================
@@ -105,6 +103,13 @@ MIGRATIONS = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_horoscopes_user_id ON horoscopes (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_horoscopes_date ON horoscopes (date);",
+
+    # ============================================================
+    # Этап 4 — Рефакторинг loops на hub
+    # ============================================================
+
+    # Добавляем поле chat_reminder_enabled в существующую таблицу
+    "ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS chat_reminder_enabled BOOLEAN NOT NULL DEFAULT TRUE;",
 ]
 
 
