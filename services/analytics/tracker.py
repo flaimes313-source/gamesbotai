@@ -69,7 +69,8 @@ EVENT_NAMES = {
     "karma_rolled", "horoscope_generated", "horoscope_cached",
 
     # Этап 3 — Социальные фичи
-    "compat_viewed",              # юзер посмотрел совместимость со звёздами
+    "compat_viewed",
+    "profile_viewed",              # залогирован просмотр профиля (viewer → viewed)
 
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",

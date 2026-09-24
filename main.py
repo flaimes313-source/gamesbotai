@@ -67,6 +67,9 @@ try:
     _log_boot("Importing horoscope sender...")
     from services.notifications.horoscope import horoscope_loop
 
+    _log_boot("Importing profile views sender...")
+    from services.notifications.profile_views import profile_views_loop
+
     _log_boot("Importing notification hub...")
     from services.notifications.hub import notification_worker_loop
 
@@ -211,6 +214,12 @@ async def main() -> None:
         asyncio.create_task(horoscope_loop(bot))
     except Exception:
         logger.exception("Failed to start horoscope loop")
+
+    logger.info("Starting profile views loop...")
+    try:
+        asyncio.create_task(profile_views_loop(bot))
+    except Exception:
+        logger.exception("Failed to start profile views loop")
 
     logger.info("Starting notification hub worker...")
     try:

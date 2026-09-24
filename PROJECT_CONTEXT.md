@@ -1786,3 +1786,128 @@ start_polling
   в `notifications/secret_feature.py` (или через UI настроек).
 - **Отключить гороскоп:** `is_enabled("horoscope_enabled", default=False)`
   в `notifications/horoscope.py` (или через UI).
+
+---
+
+## 21. ЭТАП 3 — СОЦИАЛЬНЫЕ ФИЧИ: СОВМЕСТИМОСТЬ СО ЗВЁЗДАМИ (2026-09-24)
+
+### Кратко
+
+Юзер жмёт **💥 Совместимость со звёздами** в профиле → AI сравнивает
+его вайб с **20 известными персонажами** → топ-3 совпадения с процентами
+и короткими объяснениями.
+
+**Работает без `data/`** — список персонажей встроен прямо в сервис.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/compatibility.py` | `COMPATIBILITY_PROMPT` |
+| `services/social/compatibility.py` | Список 20 персонажей + `get_compatibility`, `format_compatibility_message` |
+| `bot/handlers/compatibility.py` | Хендлер `compat_run` |
+
+### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `services/ai/base.py` | Абстрактный метод `generate_compatibility(profile_data, celebrities_text)` |
+| `services/ai/gigachat.py` | Реализация (JSON, retry) |
+| `bot/keyboards/profile.py` | Кнопка «💥 Совместимость со звёздами» (callback `compat_run`) |
+| `bot/handlers/__init__.py` | Регистрация `compatibility.router` |
+| `services/analytics/tracker.py` | Событие `compat_viewed` |
+
+### Список 20 персонажей (в `services/social/compatibility.py`)
+
+**Знаменитости:**
+Шерлок Холмс, Тони Старк, Стив Джобс, Илон Маск, Мэрилин Монро.
+
+**Вымышленные:**
+Джокер, Форрест Гамп, Эркюль Пуаро, Леви Аккерман, Сатору Годжо,
+Гэндальф, Джек Воробей, Леонардо да Винчи, Рокки Бальбоа,
+Уэнсдэй Аддамс, Гермиона Грейнджер, Ракета (GOTG), Дэдпул,
+Дон Корлеоне, Куско.
+
+Каждый персонаж:
+- `code` — уникальный код (для AI и для маппинга результата)
+- `name` — отображаемое имя
+- `emoji` — иконка в сообщении
+- `archetype` — игровой архетип (капсом)
+- характеристики (0-100): chaos, charisma, humor, energy, intellect, creativity
+
+### Как работает
+
+```
+👤 Мой профиль → 💥 Совместимость со звёздами
+  ↓
+compat_run (callback)
+  ├── проверка: есть профиль? (минимум 1 анализ)
+  ├── typing-индикатор пока AI думает
+  ├── get_compatibility(user_id):
+  │     ├── _collect_profile_data — текущий профиль юзера
+  │     ├── _format_celebrities_text — 20 строк для промта
+  │     ├── provider.generate_compatibility(...) — AI → топ-3
+  │     └── обогащение: code → name/emoji/archetype
+  ├── format_compatibility_message — текст с медалями 🥇🥈🥉
+  └── отправка + inline-кнопки
+```
+
+### Формат ответа AI
+
+```json
+{
+  "results": [
+    {"code": "sherlock", "match": 87, "reason": "..."},
+    {"code": "tony_stark", "match": 79, "reason": "..."},
+    {"code": "joker", "match": 62, "reason": "..."}
+  ]
+}
+```
+
+**Fallback:** если AI вернул `code`, которого нет в списке — пропускаем.
+Если результатов < 1 — возвращаем `None`.
+
+### Inline-кнопки под результатом
+
+- **🔄 Ещё раз** → `compat_run` (перегенерация).
+- **📤 Поделиться** → `share_profile`.
+- **⬅️ В профиль** → `my_profile`.
+
+### UX
+
+- **typing-индикатор** пока AI думает (обновляется каждые 4 сек).
+- **Медали** в тексте: 🥇 🥈 🥉.
+- **Вовлекающий финал:** «Сделай ещё анализ — может, твой топ изменится!»
+
+### Событие
+
+| Событие | Когда | Payload |
+|---|---|---|
+| `compat_viewed` | Юзер посмотрел совместимость | `{top: [code1, code2, code3]}` |
+
+### Урок про `data/`
+
+**Файлы с Python-кодом НЕ кладём в `data/`.** Была проблема на BotHost:
+`data/feature_tips.py` не подтягивался в образ (проблемы с `.gitignore`
+и структурой). Решение — встраивать данные прямо в модуль сервиса
+(`services/engagement/secret_feature.py`, `services/social/compatibility.py`).
+
+**Правило:**
+- `data/` — только ресурсы (шрифты, иконки, jokes.json).
+- Python-списки/константы → в сам модуль сервиса.
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| `data/feature_tips.py` не подтягивался на BotHost | Перенесли в `services/engagement/secret_feature.py` |
+| AI возвращал неизвестные `code` | Пропускаем через `_find_celebrity`, если None — отбрасываем |
+| AI генерил разный формат | `_chat_json` + retry с temp=0.4 |
+| Долгий AI (5-10 сек) | typing-индикатор через `_keep_typing` |
+| Кнопка «Ещё раз» не работала | Один и тот же callback `compat_run` |
+
+### Точка отката
+
+- **Отключить фичу:** закомментировать кнопку в `bot/keyboards/profile.py`.
+- **Убрать персонажа:** удалить элемент из `CELEBRITIES` в `services/social/compatibility.py`.
+- **Добавить персонажа:** добавить элемент с уникальным `code`.

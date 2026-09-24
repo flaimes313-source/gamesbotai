@@ -23,6 +23,7 @@ from services.matching.matcher import (
     get_my_profile,
     get_my_user,
 )
+from services.social.profile_views import log_view
 from utils.logging import get_logger
 
 router = Router()
@@ -106,6 +107,12 @@ async def _send_next_candidate(callback: CallbackQuery, mode: str, telegram_id: 
 
     await track("match_created", telegram_id=telegram_id, payload={"mode": mode, "score": c["score"]})
     await unlock_achievement(me.id, "first_match")
+
+    # Логируем просмотр профиля кандидата
+    try:
+        await log_view(viewer_id=me.id, viewed_id=c["user_id"], source="matching")
+    except Exception:
+        logger.exception("[VIEWS] matching log failed")
 
     description_line = ""
     try:

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from database.connection import async_session
 from database.models import Profile, User
 from services.feature_flags import is_enabled
+from services.social.profile_views import log_view
 from utils.logging import get_logger
 
 router = Router()
@@ -91,6 +92,9 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
             await message_or_callback.answer(text)
         return
 
+    me_id = None
+    friend_id = None
+
     async with async_session() as session:
         me = (await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -99,6 +103,7 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
         if me is None:
             text = "Сначала отправь фото — создай свой профиль!"
         else:
+            me_id = me.id
             friend = await _find_friend_for_comparison(session, me)
 
             if friend is None:
@@ -111,6 +116,7 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
                     "«🎯 Найти игроков» — там есть кнопка «📊 Сравнить по цифрам»."
                 )
             else:
+                friend_id = friend.id
                 my_p = await _latest_profile(session, me.id)
                 fr_p = await _latest_profile(session, friend.id)
 
@@ -135,6 +141,14 @@ async def _send_comparison(message_or_callback, telegram_id: int) -> None:
         await message_or_callback.message.answer(text)
     else:
         await message_or_callback.answer(text)
+
+    # Логируем просмотр профиля друга (после отправки — не блокируем)
+    if me_id and friend_id:
+        try:
+            await log_view(viewer_id=me_id, viewed_id=friend_id, source="compare")
+            await log_view(viewer_id=friend_id, viewed_id=me_id, source="compare")
+        except Exception:
+            logger.exception("[VIEWS] compare log failed")
 
     # Отправляем накопленные уведомления
     try:
@@ -173,6 +187,9 @@ async def cb_compare_with(callback: CallbackQuery):
         await callback.message.answer("Некорректный игрок.")
         return
 
+    me_id = None
+    target_id = None
+
     async with async_session() as session:
         me = (await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
@@ -200,17 +217,26 @@ async def cb_compare_with(callback: CallbackQuery):
             await callback.message.answer("У этого игрока пока нет профиля.")
             return
 
+        me_id = me.id
+        target_id = target.id
         target_name = target.first_name or "Игрок"
         text = _format_comparison(my_p, their_p, target_name)
 
     # Вовлечение: сравнение
     try:
         from services.engagement.service import on_compare
-        await on_compare(me.id)
+        await on_compare(me_id)
     except Exception:
         logger.exception("Engagement on_compare failed")
 
     await callback.message.answer(text)
+
+    # Логируем просмотр профиля
+    if me_id and target_id:
+        try:
+            await log_view(viewer_id=me_id, viewed_id=target_id, source="compare")
+        except Exception:
+            logger.exception("[VIEWS] compare_with log failed")
 
     # Отправляем накопленные уведомления
     try:
