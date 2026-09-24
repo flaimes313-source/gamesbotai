@@ -57,6 +57,8 @@ data/test_*.png
 !data/jokes.json
 !data/icons/
 !data/icons/*.png
+!data/feature_tips.py
+!data/celebrities.py
 
 # ============================================================
 # OS
