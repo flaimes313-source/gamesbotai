@@ -1,92 +1,74 @@
 """
-Раз в неделю публикует топы игроков.
+Недельные топы — через hub (Этап 4).
+
+Логика:
+- Раз в час проверяем: сейчас вс 20:00 UTC?
+- Проверяем: не слали ли глобально топы за последние 6 дней?
+- Строим общий текст топов (по хаосу, юмору, очкам).
+- Ставим в hub для каждого активного юзера (kind="tops", priority=4).
+
+Hub сам проверит:
+- feature flag tops_enabled,
+- настройки юзера (tops_enabled),
+- тихие часы (по TZ юзера),
+- дневной лимит (2 проактивных),
+- дубли (tops_sent сегодня?).
+
+Приоритет 4 — низкий. Если лимит набран, топы отбрасываются.
 """
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database.connection import async_session
-from database.models import Profile, User, UserEngagement
-from services.analytics.tracker import track
+from database.models import Event, Profile, User, UserEngagement
 from services.engagement.points import title_for_level
+from services.notifications.hub import schedule_notification
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-# Воскресенье, 20:00 UTC
-TOPS_WEEKDAY = 6
+# ============================================================
+# НАСТРОЙКИ
+# ============================================================
+TOPS_WEEKDAY = 6                # 6 = воскресенье (0=пн)
 TOPS_HOUR_UTC = 20
-
-# Не спамить чаще, чем раз в 7 дней
 MIN_INTERVAL_DAYS = 6
+CHECK_INTERVAL_SECONDS = 3600   # каждый час
+INITIAL_DELAY_SECONDS = 600
+TOPS_PRIORITY = 4               # низкий
 
 
-async def send_weekly_tops(bot: Bot) -> None:
+# ============================================================
+# ГЛОБАЛЬНЫЙ COOLDOWN
+# ============================================================
+async def _tops_sent_recently() -> bool:
     """
-    Раз в неделю рассылает топы активным игрокам.
+    Проверяет, отправлялись ли топы за последние MIN_INTERVAL_DAYS дней.
+    Глобально — по любому юзеру.
     """
-    async with async_session() as session:
-        # Проверяем, когда последний раз отправляли
-        from database.models import Event
-        from sqlalchemy import func
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MIN_INTERVAL_DAYS)
 
-        last_event = (await session.execute(
-            select(Event.created_at)
-            .where(Event.name == "tops_sent")
-            .order_by(Event.id.desc())
-            .limit(1)
-        )).scalar_one_or_none()
-
-        if last_event:
-            now = datetime.now(timezone.utc)
-            # Учитываем tz
-            if last_event.tzinfo is None:
-                last_event = last_event.replace(tzinfo=timezone.utc)
-            if (now - last_event) < timedelta(days=MIN_INTERVAL_DAYS):
-                logger.info("[TOPS] Skipped — sent recently")
-                return
-
-        # Получаем активных игроков в игре
-        users = (await session.execute(
-            select(User)
-            .where(User.is_blocked.is_(False))
-            .where(User.participates_in_game.is_(True))
-            .where(User.last_active_at >= datetime.now(timezone.utc) - timedelta(days=14))
-        )).scalars().all()
-
-    if not users:
-        logger.info("[TOPS] No active users")
-        return
-
-    # Строим тексты топов
-    tops_text = await _build_all_tops()
-
-    if not tops_text:
-        logger.info("[TOPS] No data")
-        return
-
-    sent = 0
-    for user in users:
-        try:
-            await bot.send_message(
-                user.telegram_id,
-                tops_text,
-            )
-            sent += 1
-            await asyncio.sleep(0.05)
-        except TelegramForbiddenError:
-            pass
-        except Exception:
-            logger.exception(f"[TOPS] Failed for {user.telegram_id}")
-
-    await track("tops_sent", telegram_id=0, payload={"sent": sent})
-    logger.info(f"[TOPS] Sent to {sent} users")
+    try:
+        async with async_session() as session:
+            cnt = (await session.execute(
+                select(func.count(Event.id))
+                .where(Event.name == "tops_sent")
+                .where(Event.created_at >= cutoff)
+            )).scalar_one()
+            return cnt > 0
+    except Exception:
+        logger.exception("[TOPS] cooldown check failed")
+        return False
 
 
+# ============================================================
+# СБОР ТЕКСТА
+# ============================================================
 async def _build_all_tops() -> str:
     """Строит общий текст со всеми топами."""
     lines = ["🏆 <b>НЕДЕЛЬНЫЕ ТОПЫ</b>\n"]
@@ -150,13 +132,71 @@ async def _build_all_tops() -> str:
     return "\n".join(lines)
 
 
+# ============================================================
+# ОТПРАВКА
+# ============================================================
+async def send_weekly_tops(bot: Bot) -> None:
+    """
+    Ставит топы в hub для активных юзеров.
+    """
+    # Глобальный cooldown
+    if await _tops_sent_recently():
+        logger.info("[TOPS] skipped — sent recently")
+        return
+
+    # Активные юзеры в игре
+    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    async with async_session() as session:
+        users = (await session.execute(
+            select(User)
+            .where(User.is_blocked.is_(False))
+            .where(User.participates_in_game.is_(True))
+            .where(User.last_active_at >= cutoff)
+        )).scalars().all()
+
+    if not users:
+        logger.info("[TOPS] no active users")
+        return
+
+    # Строим текст
+    tops_text = await _build_all_tops()
+    if not tops_text:
+        logger.info("[TOPS] no data")
+        return
+
+    # Ставим в hub для каждого
+    scheduled = 0
+    for user in users:
+        try:
+            ok = await schedule_notification(
+                user_id=user.id,
+                kind="tops",
+                priority=TOPS_PRIORITY,
+                payload={"text": tops_text},
+                tz_name=user.timezone,
+            )
+            if ok:
+                scheduled += 1
+        except Exception:
+            logger.exception(f"[TOPS] schedule failed user={user.id}")
+
+    # Глобальный маркер — что топы в этот цикл были отправлены.
+    # Это НЕ событие для юзера, а глобальное «мы запускали рассылку».
+    # Но hub уже трекает `tops_sent` для каждого юзера, кому ушло.
+    # Значит, если scheduled > 0 — cooldown сработает на следующий цикл.
+    if scheduled:
+        logger.info(f"[TOPS] scheduled={scheduled}")
+
+
+# ============================================================
+# ЦИКЛ
+# ============================================================
 async def tops_loop(bot: Bot) -> None:
     """
-    Фоновый цикл: раз в час проверяет — не пора ли отправить топы.
+    Фоновый цикл: раз в час.
     Отправляет в воскресенье в 20:00 UTC.
     """
-    # Первый запуск через 10 минут после старта
-    await asyncio.sleep(600)
+    await asyncio.sleep(INITIAL_DELAY_SECONDS)
 
     while True:
         try:
@@ -164,7 +204,6 @@ async def tops_loop(bot: Bot) -> None:
             if now.weekday() == TOPS_WEEKDAY and now.hour == TOPS_HOUR_UTC:
                 await send_weekly_tops(bot)
         except Exception:
-            logger.exception("[TOPS] Loop iteration failed")
+            logger.exception("[TOPS] loop iteration failed")
 
-        # Проверяем каждый час
-        await asyncio.sleep(3600)
+        await asyncio.sleep(CHECK_INTERVAL_SECONDS)

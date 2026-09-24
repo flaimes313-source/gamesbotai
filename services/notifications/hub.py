@@ -1,5 +1,5 @@
 """
-Единый сервис уведомлений (Этап 1 — инфраструктура).
+Единый сервис уведомлений (Этап 1 + Этап 4).
 
 Использование:
     from services.notifications.hub import schedule_notification
@@ -49,7 +49,11 @@ PRIORITY_DROP_THRESHOLD = 4
 WORKER_INTERVAL_SECONDS = 15 * 60  # 15 минут
 
 
-# Маппинг kind → ключ feature flag.
+# ============================================================
+# МАППИНГИ KIND → ...
+# ============================================================
+
+# kind → ключ feature flag.
 KIND_TO_FLAG: Dict[str, str] = {
     "daily_result": "daily_content_enabled",
     "horoscope": "horoscope_enabled",
@@ -58,10 +62,13 @@ KIND_TO_FLAG: Dict[str, str] = {
     "weekly_vibe": "weekly_vibe_enabled",
     "tops": "tops_enabled",
     "premium_reminder": "premium_reminder_enabled",
+    "premium_reminder_3d": "premium_reminder_enabled",
+    "premium_reminder_1d": "premium_reminder_enabled",
+    "premium_expired": "premium_reminder_enabled",
     "chat_reminder": "chat_reminder_enabled",
 }
 
-# Маппинг kind → поле в UserNotificationSettings.
+# kind → поле в UserNotificationSettings.
 KIND_TO_SETTING: Dict[str, str] = {
     "daily_result": "daily_result_enabled",
     "horoscope": "horoscope_enabled",
@@ -70,10 +77,13 @@ KIND_TO_SETTING: Dict[str, str] = {
     "weekly_vibe": "weekly_vibe_enabled",
     "tops": "tops_enabled",
     "premium_reminder": "premium_reminder_enabled",
+    "premium_reminder_3d": "premium_reminder_enabled",
+    "premium_reminder_1d": "premium_reminder_enabled",
+    "premium_expired": "premium_reminder_enabled",
     "chat_reminder": "chat_reminder_enabled",
 }
 
-# Маппинг kind → event name.
+# kind → event name (для идемпотентности и аналитики).
 KIND_TO_EVENT: Dict[str, str] = {
     "daily_result": "daily_sent",
     "horoscope": "horoscope_sent",
@@ -82,6 +92,9 @@ KIND_TO_EVENT: Dict[str, str] = {
     "weekly_vibe": "vibe_weekly_sent",
     "tops": "tops_sent",
     "premium_reminder": "premium_reminder_sent",
+    "premium_reminder_3d": "premium_reminder_3d",
+    "premium_reminder_1d": "premium_reminder_1d",
+    "premium_expired": "premium_expired",
     "chat_reminder": "chat_reminder_sent",
 }
 
@@ -154,7 +167,7 @@ async def update_notification_setting(
 
 
 # ============================================================
-# ПРОВЕРКИ ПЕРЕД ОТПРАВКОЙ
+# ПРОВЕРКИ
 # ============================================================
 async def _already_sent_today(user_id: int, kind: str) -> bool:
     event_name = KIND_TO_EVENT.get(kind)

@@ -1,12 +1,10 @@
 """
-UI настроек уведомлений (Этап 1 — инфраструктура).
+UI настроек уведомлений (Этап 1 + Этап 4).
 
 Доступ:
     ⚙️ Настройки → 🔔 Уведомления
 
-Что показывает:
-- 7 тумблеров категорий (вкл/выкл).
-- Краткая подсказка про тихие часы и лимит.
+Показывает 8 тумблеров категорий (вкл/выкл).
 
 Callbacks:
 - notif_menu — открыть меню.
@@ -44,6 +42,21 @@ _NOTIF_TEXT = (
     "и не беспокоим ночью (23:00–08:00).</i>\n\n"
     "Настрой то, что тебе важно."
 )
+
+
+# ============================================================
+# МАППИНГ: короткое имя → поле в UserNotificationSettings
+# ============================================================
+_NAME_TO_FIELD = {
+    "daily_result": "daily_result_enabled",
+    "horoscope": "horoscope_enabled",
+    "secret_feature": "secret_feature_enabled",
+    "profile_views": "profile_views_enabled",
+    "weekly_vibe": "weekly_vibe_enabled",
+    "tops": "tops_enabled",
+    "premium_reminder": "premium_reminder_enabled",
+    "chat_reminder": "chat_reminder_enabled",
+}
 
 
 # ============================================================
@@ -91,18 +104,7 @@ async def cb_notif_toggle(callback: CallbackQuery):
     # notif_toggle_horoscope → horoscope
     name = callback.data.replace("notif_toggle_", "").strip()
 
-    # Маппинг короткое имя → поле в UserNotificationSettings
-    mapping = {
-        "daily_result": "daily_result_enabled",
-        "horoscope": "horoscope_enabled",
-        "secret_feature": "secret_feature_enabled",
-        "profile_views": "profile_views_enabled",
-        "weekly_vibe": "weekly_vibe_enabled",
-        "tops": "tops_enabled",
-        "premium_reminder": "premium_reminder_enabled",
-    }
-
-    field = mapping.get(name)
+    field = _NAME_TO_FIELD.get(name)
     if not field:
         await callback.answer("Неизвестная категория", show_alert=True)
         return
@@ -137,7 +139,6 @@ async def cb_notif_toggle(callback: CallbackQuery):
             reply_markup=notifications_menu_kb(fresh)
         )
     except Exception:
-        # Если сообщение недоступно для edit — шлём новое
         try:
             await callback.message.answer(
                 _NOTIF_TEXT,

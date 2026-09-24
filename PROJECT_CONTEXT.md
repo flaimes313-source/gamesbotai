@@ -2049,3 +2049,81 @@ compat_run (callback)
   запуск `profile_views_loop(bot)` в `main.py`.
 - **Уменьшить спам:** поднять `MIN_DAYS_AWAY_FOR_PSEUDO` (сейчас 4) или
   отключить тумблер `profile_views_enabled` у юзера.
+
+---
+
+## 23. ЭТАП 4 — РЕФАКТОРИНГ LOOPS НА HUB (2026-09-24)
+
+### Кратко
+
+Перевели 4 старых цикла уведомлений на **единый сервис `hub`**:
+`daily_sender`, `chat_reminder`, `premium_reminder`, `tops_sender`.
+
+Раньше каждый loop **сам отправлял** через `bot.send_message`, сам проверял
+тихие часы, сам трекал события. Логика дублировалась, а **тумблеры юзера
+в `⚙️ Настройки → 🔔 Уведомления` не работали** для старых фич.
+
+Теперь **все уведомления** проходят через hub. Hub сам проверяет:
+1. Feature flag.
+2. Настройки юзера (тумблер).
+3. Тихие часы (23:00–08:00 TZ юзера).
+4. Дневной лимит (2 проактивных).
+5. Дубли (уже слали сегодня?).
+
+### Что изменилось
+
+| Файл | Что |
+|---|---|
+| `services/notifications/daily_sender.py` | Только генерит текст + `schedule_notification(kind="daily_result", priority=2)` |
+| `services/notifications/chat_reminder.py` | Только ищет непрочитанные + `schedule_notification(kind="chat_reminder", priority=3)` |
+| `services/notifications/premium_reminder.py` | 3 kind: `premium_reminder_3d`, `premium_reminder_1d`, `premium_expired`, все priority=1 |
+| `services/notifications/tops_sender.py` | Только строит текст + `schedule_notification(kind="tops", priority=4)` |
+| `services/notifications/hub.py` | Добавлены kind-ы: `chat_reminder`, `premium_reminder_3d`, `premium_reminder_1d`, `premium_expired` |
+| `database/models.py` | Поле `chat_reminder_enabled` в `UserNotificationSettings` |
+| `database/init_db.py` | Миграция `ADD COLUMN IF NOT EXISTS chat_reminder_enabled` |
+| `bot/handlers/settings_notifications.py` | 8 тумблеров (было 7) — добавлен `chat_reminder` |
+
+### Приоритеты
+
+| Priority | Что | Логика |
+|---|---|---|
+| **1** | `premium_reminder_3d` / `_1d` / `premium_expired` | Игнорит дневной лимит — критично для денег |
+| **2** | `daily_result` | Игнорит дневной лимит — ритуал |
+| **3** | `chat_reminder`, `horoscope` | Средний. Если лимит набран — всё равно шлём |
+| **4** | `secret_feature`, `profile_views`, `tops` | Если лимит набран — **отбрасывается** |
+
+### Cooldown-и фич (остались в файлах, не в hub)
+
+| Фича | Правило |
+|---|---|
+| `chat_reminder` | Не чаще 1 раза в 48 часов |
+| `premium_reminder_3d` | Не чаще 1 раза в 23 часа |
+| `premium_reminder_1d` | Не чаще 1 раза в 23 часа |
+| `premium_expired` | Не чаще 1 раза в 48 часов |
+| `tops` | Глобально не чаще 1 раза в 6 дней |
+
+Hub защищает от **дублей «сегодня»**, а cooldown-ы — **правила фич** (реже чем раз в день).
+
+### Итог
+
+**Все 8 категорий уведомлений соблюдают:**
+- тумблеры юзера,
+- тихие часы,
+- дневной лимит (2 проактивных),
+- дубли.
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| Юзер отключал `daily_result` — а прикол всё равно приходил | Hub проверяет `KIND_TO_SETTING["daily_result"]` |
+| Тихие часы работали по-разному у loops | `is_night_now` только в hub |
+| Дневной лимит не работал | `can_send_now` считает `_count_sent_today` |
+| `premium_reminder` — один kind на 3 разных события | Разделили на `premium_reminder_3d` / `_1d` / `premium_expired` |
+| Хотели ограничить общее кол-во уведомлений — не было места | Всё в `hub.MAX_DAILY_PROACTIVE = 2` |
+
+### Точка отката
+
+- **Отключить hub:** вернуть `bot.send_message` в loops (не рекомендую — потеряешь тумблеры).
+- **Ослабить лимит:** поднять `MAX_DAILY_PROACTIVE` в `hub.py`.
+- **Убрать приоритет:** изменить `PRIORITY_DROP_THRESHOLD` (сейчас 4).
