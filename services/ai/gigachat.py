@@ -9,6 +9,7 @@ from gigachat.models import Chat, Messages, MessagesRole
 
 from config import config
 from prompts.chat_helper import CHAT_ANALYSIS_PROMPT, CHAT_REPLY_PROMPT
+from prompts.compatibility import COMPATIBILITY_PROMPT
 from prompts.daily_result import DAILY_RESULT_PROMPT
 from prompts.horoscope import HOROSCOPE_PROMPT
 from prompts.match_description import MATCH_DESCRIPTION_PROMPT
@@ -23,9 +24,6 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Утилиты: определение MIME по magic bytes
-# ============================================================
 def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
     if image_bytes[:3] == b"\xff\xd8\xff":
         return "image/jpeg", "jpg"
@@ -40,9 +38,6 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
     return "image/jpeg", "jpg"
 
 
-# ============================================================
-# Утилиты: устойчивый парсинг JSON
-# ============================================================
 def _try_fix_json(text: str) -> str:
     s = text
     s = re.sub(r",(\s*[}\]])", r"\1", s)
@@ -82,12 +77,8 @@ def _extract_json(text: str) -> Dict[str, Any]:
         )
 
 
-# ============================================================
-# Утилита: разбор текстового ответа вайб-отчёта
-# ============================================================
 def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
     text = (raw or "").strip()
-
     summary = ""
     report = text
     recommendation = ""
@@ -95,18 +86,15 @@ def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
     m = re.search(r"\[SUMMARY\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         summary = m.group(1).strip()
-
     m = re.search(r"\[REPORT\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         report = m.group(1).strip()
-
     m = re.search(r"\[RECOMMENDATION\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         recommendation = m.group(1).strip()
 
     if not summary and not report and not recommendation:
         report = text
-
     if not summary and report:
         first_sentence = re.split(r"[.!?]\s", report, maxsplit=1)[0]
         summary = (first_sentence[:120] + "…") if len(first_sentence) > 120 else first_sentence
@@ -118,9 +106,6 @@ def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
     }
 
 
-# ============================================================
-# Провайдер GigaChat
-# ============================================================
 class GigaChatProvider(AIProvider):
     """Реализация AIProvider поверх официального SDK GigaChat."""
 
@@ -155,7 +140,6 @@ class GigaChatProvider(AIProvider):
                 chat = Chat(model=used_model, **chat_kwargs)
             except TypeError:
                 chat = Chat(**chat_kwargs)
-
             response = self._client.chat(chat)
             return response.choices[0].message.content
 
@@ -189,9 +173,6 @@ class GigaChatProvider(AIProvider):
         )
         return _extract_json(raw)
 
-    # --------------------------------------------------------
-    # Анализ фото (Vision)
-    # --------------------------------------------------------
     async def analyze_photo(
         self,
         image_bytes: bytes,
@@ -210,7 +191,6 @@ class GigaChatProvider(AIProvider):
             f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), "
             f"file_id={file_obj.id_}"
         )
-
         prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
 
         messages = [
@@ -221,7 +201,6 @@ class GigaChatProvider(AIProvider):
                 attachments=[file_obj.id_],
             ),
         ]
-
         vision_model = config.GIGACHAT_VISION_MODEL
         logger.info(f"Analyzing photo with Vision model: {vision_model}")
 
@@ -399,9 +378,6 @@ class GigaChatProvider(AIProvider):
             log_tag="CHAT_ANALYZE",
         )
 
-    # --------------------------------------------------------
-    # Вайб-отчёт (Шаг 1.3)
-    # --------------------------------------------------------
     async def generate_vibe_report(
         self,
         profile_data: Dict[str, Any],
@@ -422,9 +398,7 @@ class GigaChatProvider(AIProvider):
                 f"{k}={v}" for k, v in scores.items() if isinstance(v, int)
             )
             vibe = p.get("vibe", "")
-            profiles_lines.append(
-                f"- «{arch}» ({vibe}) [{scores_str}]"
-            )
+            profiles_lines.append(f"- «{arch}» ({vibe}) [{scores_str}]")
         profiles_text = "\n".join(profiles_lines) if profiles_lines else "(нет)"
 
         tops_lines = []
@@ -477,12 +451,7 @@ class GigaChatProvider(AIProvider):
         )
 
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
-
-        raw = await self._chat(
-            messages,
-            temperature=0.85,
-            max_tokens=1400,
-        )
+        raw = await self._chat(messages, temperature=0.85, max_tokens=1400)
         logger.info(f"[VIBE] raw len={len(raw)} weekly={weekly}")
 
         parsed = _parse_vibe_report_text(raw)
@@ -493,16 +462,10 @@ class GigaChatProvider(AIProvider):
         )
         return parsed
 
-    # --------------------------------------------------------
-    # Гороскоп (Этап 2)
-    # --------------------------------------------------------
     async def generate_horoscope(
         self,
         profile_data: Dict[str, Any],
     ) -> str:
-        """
-        Короткий шутливый гороскоп. Возвращает строку (HTML).
-        """
         prompt = HOROSCOPE_PROMPT.format(
             user_name=profile_data.get("user_name", "Игрок"),
             archetype=profile_data.get("archetype", ""),
@@ -516,20 +479,41 @@ class GigaChatProvider(AIProvider):
             level=profile_data.get("level", 1),
             level_title=profile_data.get("level_title", ""),
         )
-
         messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        raw = await self._chat(messages, temperature=0.95, max_tokens=250)
 
-        raw = await self._chat(
-            messages,
-            temperature=0.95,
-            max_tokens=250,
-        )
-
-        # Чистим от markdown-обёрток, если AI их добавил
         text = (raw or "").strip()
         text = re.sub(r"^```[a-z]*\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
         text = text.strip()
-
         logger.info(f"[HOROSCOPE] raw len={len(text)}")
         return text
+
+    async def generate_compatibility(
+        self,
+        profile_data: Dict[str, Any],
+        celebrities_text: str,
+    ) -> Dict[str, Any]:
+        """
+        Совместимость со звёздами. Возвращает {"results": [...]}.
+        """
+        prompt = COMPATIBILITY_PROMPT.format(
+            archetype=profile_data.get("archetype", ""),
+            vibe=profile_data.get("vibe", ""),
+            chaos=profile_data.get("chaos", 0),
+            charisma=profile_data.get("charisma", 0),
+            humor=profile_data.get("humor", 0),
+            energy=profile_data.get("energy", 0),
+            intellect=profile_data.get("intellect", 0),
+            creativity=profile_data.get("creativity", 0),
+            confidence=profile_data.get("confidence", 0),
+            celebrities_text=celebrities_text,
+        )
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=800,
+            log_tag="COMPAT",
+        )

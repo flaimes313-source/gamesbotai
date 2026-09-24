@@ -9,79 +9,45 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Белый список всех событий проекта.
-# Неизвестные имена логируются как WARNING, но всё равно пишутся.
-# ============================================================
 EVENT_NAMES = {
     # Пользовательские
-    "new_users",
-    "photo_sent",
-    "analysis_started",
-    "analysis_completed",
-    "second_analysis",
+    "new_users", "photo_sent", "analysis_started", "analysis_completed", "second_analysis",
 
     # Виральность
-    "share_clicked",
-    "share_generated",
-    "referral_opened",
-    "referral_completed",
+    "share_clicked", "share_generated", "referral_opened", "referral_completed",
 
     # Игра
-    "game_opt_in",
-    "game_opt_out",
+    "game_opt_in", "game_opt_out",
 
     # Поиск / матчи
-    "search_used",
-    "match_created",
-    "block_user",
+    "search_used", "match_created", "block_user",
 
     # Тесты
-    "test_started",
-    "test_completed",
+    "test_started", "test_completed",
 
     # Монетизация
-    "pro_purchase",
-    "pro_gift_sent",
-    "pro_gift_received",
-    "subscription_offer_shown",
-    "subscription_confirmed",
-    "subscription_gate_shown",
-    "ad_shown",
-    "ad_clicked",
+    "pro_purchase", "pro_gift_sent", "pro_gift_received",
+    "subscription_offer_shown", "subscription_confirmed", "subscription_gate_shown",
+    "ad_shown", "ad_clicked",
 
     # PRO напоминания
-    "premium_reminder_3d",
-    "premium_reminder_1d",
-    "premium_expired",
+    "premium_reminder_3d", "premium_reminder_1d", "premium_expired",
 
     # Уведомления
-    "daily_sent",
-    "chat_reminder_sent",
+    "daily_sent", "chat_reminder_sent",
 
     # Чат
-    "chats_list_viewed",
-    "chat_message_sent",
-    "chat_ai_sent",
-    "chat_ai_analyzed",
+    "chats_list_viewed", "chat_message_sent", "chat_ai_sent", "chat_ai_analyzed",
 
-    # Вовлечение (engagement) — этап 5.1
-    "challenge_viewed",
-    "challenge_completed",
-    "tops_sent",
+    # Вовлечение (этап 5.1)
+    "challenge_viewed", "challenge_completed", "tops_sent",
 
     # Награды (этап 6.2.2 + 6.3)
-    "reward_claimed",
-    "referral_reward_10",
-    "streak_reward",
-    "points_reward",
+    "reward_claimed", "referral_reward_10", "streak_reward", "points_reward",
 
     # Недельные челленджи и квесты (этап 7)
-    "weekly_challenge_viewed",
-    "weekly_challenge_completed",
-    "quest_started",
-    "quest_step_completed",
-    "quest_completed",
+    "weekly_challenge_viewed", "weekly_challenge_completed",
+    "quest_started", "quest_step_completed", "quest_completed",
 
     # Сезоны (этап 7)
     "season_active",
@@ -90,51 +56,32 @@ EVENT_NAMES = {
     "dynamics_viewed",
 
     # Легендарные архетипы (Шаг 1.2)
-    "legendary_archetype",
-    "legendary_achievement",
+    "legendary_archetype", "legendary_achievement",
 
     # Вайб-отчёт (Шаг 1.3)
-    "vibe_report_viewed",
-    "vibe_weekly_sent",
+    "vibe_report_viewed", "vibe_weekly_sent",
 
     # Этап 1 — Уведомления (инфраструктура)
-    "notif_menu_viewed",
-    "notif_toggle",
-    "horoscope_sent",
-    "secret_feature_sent",
-    "profile_views_sent",
-    "premium_reminder_sent",
+    "notif_menu_viewed", "notif_toggle",
+    "horoscope_sent", "secret_feature_sent", "profile_views_sent", "premium_reminder_sent",
 
     # Этап 2 — Фичи вовлечения
-    "karma_rolled",                # выпала карма дня
-    "horoscope_generated",         # AI сгенерил гороскоп (кэш-мисс)
-    "horoscope_cached",            # гороскоп взят из кэша
-    # horoscope_sent уже выше (hub)
+    "karma_rolled", "horoscope_generated", "horoscope_cached",
+
+    # Этап 3 — Социальные фичи
+    "compat_viewed",              # юзер посмотрел совместимость со звёздами
 
     # Старые события (для совместимости)
-    "message_sent",
-    "joke_sent",
-    "inbox_viewed",
+    "message_sent", "joke_sent", "inbox_viewed",
 }
 
 
-# ============================================================
-# Запись события
-# ============================================================
 async def track(
     name: str,
     telegram_id: Optional[int] = None,
     user_id: Optional[int] = None,
     payload: Optional[dict] = None,
 ) -> None:
-    """
-    Записывает событие в БД.
-
-    Можно передать либо telegram_id, либо user_id.
-    Если только telegram_id — сервис сам подтянет user.id.
-
-    Не падает, если что-то пошло не так — просто логирует.
-    """
     if name not in EVENT_NAMES:
         logger.warning(f"Unknown event name: {name}")
 
@@ -159,11 +106,7 @@ async def track(
         logger.exception(f"Track failed: {name}")
 
 
-# ============================================================
-# Безопасный вызов (не бросает исключений)
-# ============================================================
 async def track_safe(name: str, **kwargs: Any) -> None:
-    """Обёртка, которая гарантированно не падает."""
     try:
         await track(name, **kwargs)
     except Exception:

@@ -54,9 +54,6 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
-    # --------------------------------------------------------
-    # Чат
-    # --------------------------------------------------------
     @abstractmethod
     async def generate_chat_reply_suggestions(
         self,
@@ -75,9 +72,6 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
-    # --------------------------------------------------------
-    # Вайб-отчёт (Шаг 1.3)
-    # --------------------------------------------------------
     @abstractmethod
     async def generate_vibe_report(
         self,
@@ -86,32 +80,47 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
-    # --------------------------------------------------------
-    # Гороскоп (Этап 2)
-    # --------------------------------------------------------
     @abstractmethod
     async def generate_horoscope(
         self,
         profile_data: Dict[str, Any],
     ) -> str:
+        ...
+
+    # --------------------------------------------------------
+    # Совместимость со звёздами (Этап 3)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_compatibility(
+        self,
+        profile_data: Dict[str, Any],
+        celebrities_text: str,
+    ) -> Dict[str, Any]:
         """
-        Генерирует короткий шутливый гороскоп.
+        Сравнивает юзера с 20 персонажами.
 
-        profile_data:
+        Параметры:
+            profile_data:
+                {
+                    "archetype": str,
+                    "vibe": str,
+                    "chaos": int,
+                    "charisma": int,
+                    "humor": int,
+                    "energy": int,
+                    "intellect": int,
+                    "creativity": int,
+                    "confidence": int,
+                }
+            celebrities_text: строка со списком 20 персонажей
+                в формате "code | имя | архетип | chaos=..,charisma=..".
+
+        Возвращает:
             {
-                "user_name": str,
-                "archetype": str,
-                "vibe": str,
-                "chaos": int,
-                "charisma": int,
-                "humor": int,
-                "energy": int,
-                "intellect": int,
-                "current_streak": int,
-                "level": int,
-                "level_title": str,
+                "results": [
+                    {"code": str, "match": int, "reason": str},
+                    ...3 штуки...
+                ]
             }
-
-        Возвращает строку (готовый HTML-текст гороскопа).
         """
         ...
