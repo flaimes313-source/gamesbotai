@@ -1617,3 +1617,172 @@ start_polling
 - **Отключить уведомления глобально:** в `feature_flags.py` добавить
   в `DEFAULTS` ключи `horoscope_enabled: False` и т.п.
 - **Отключить карму:** закомментировать блок `Karma roll` в `start.py`.
+
+---
+
+## 20. ЭТАП 2 — ФИЧИ ВОВЛЕЧЕНИЯ: СЕКРЕТНАЯ ФИЧА + ГОРОСКОП (2026-09-24)
+
+### Кратко
+
+- **💡 Секретная фича дня** — если юзера не было 2+ дня, шлём ему
+  короткую подсказку про одну из 30 фич бота.
+- **🔮 Гороскоп вайба** — 2 раза в неделю (вт/пт) в 10:00 по TZ,
+  AI-гороскоп по текущему архетипу.
+
+Оба уведомления идут **через hub** (`services/notifications/hub.py`),
+соблюдают лимиты/тихие часы/настройки юзера.
+
+### Секретная фича дня
+
+#### Логика
+
+```
+Раз в 30 минут (secret_feature_loop):
+  ├── у кого локально 13:00?
+  ├── юзера не было 2..60 дней? (should_send)
+  ├── pick_unseen_tip(user_id) — случайная непоказанная подсказка
+  ├── format_tip_message(tip) — оборачиваем в «💡 СЕКРЕТНАЯ ФИЧА ДНЯ»
+  ├── schedule_notification(kind="secret_feature", priority=4)
+  └── mark_tip_seen(user_id, code) — RewardClaim tip_seen_<code>
+```
+
+#### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `data/feature_tips.py` | 30 подсказок (code, emoji, text) + утилиты |
+| `services/engagement/secret_feature.py` | `should_send`, `pick_unseen_tip`, `prepare_secret_feature`, `mark_tip_seen`, `format_tip_message` |
+| `services/notifications/secret_feature.py` | Планировщик `secret_feature_loop` |
+
+#### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `secret_feature.py` | `MIN_DAYS_AWAY` | 2 |
+| `secret_feature.py` | `MAX_DAYS_AWAY` | 60 |
+| `secret_feature.py` | `REWARD_PREFIX` | `tip_seen_` |
+| `notifications/secret_feature.py` | `TARGET_HOUR` | 13 |
+| `notifications/secret_feature.py` | `CHECK_INTERVAL_SECONDS` | 1800 (30 мин) |
+
+#### Ротация подсказок
+
+- Одна подсказка показывается юзеру **один раз** (`RewardClaim tip_seen_<code>`).
+- Когда все 30 закончились — **сбрасываем** (показываем случайную).
+- Хранится в `RewardClaim` (не удаляем).
+
+#### Приоритет
+
+`priority=4` — **низкий**. Если дневной лимит (2) набран, подсказка
+отбрасывается. Это правильно: лучше не спамить.
+
+### Гороскоп вайба
+
+#### Логика
+
+```
+Раз в 30 минут (horoscope_loop):
+  ├── у кого локально 10:00?
+  ├── сегодня вторник (1) или пятница (4)?
+  ├── prepare_horoscope(user_id):
+  │     ├── _load_cached(user_id) — есть гороскоп на сегодня?
+  │     │     ├── да → возвращаем из кэша (event: horoscope_cached)
+  │     │     └── нет → _collect_profile_data → AI → _save_cache
+  │     └── возвращаем {"text": ...}
+  ├── format_horoscope_message(text) — оборачиваем в «🔮 ГОРОСКОП ВАЙБА»
+  └── schedule_notification(kind="horoscope", priority=3)
+```
+
+#### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/horoscope.py` | `HOROSCOPE_PROMPT` |
+| `services/engagement/horoscope.py` | `prepare_horoscope`, `format_horoscope_message`, кэш |
+| `services/notifications/horoscope.py` | Планировщик `horoscope_loop` |
+
+#### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `services/ai/base.py` | Абстрактный `generate_horoscope(profile_data)` |
+| `services/ai/gigachat.py` | Реализация (возвращает строку, не JSON) |
+| `main.py` | Запуск `horoscope_loop` |
+
+#### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `notifications/horoscope.py` | `TARGET_HOUR` | 10 |
+| `notifications/horoscope.py` | `TARGET_WEEKDAYS` | `{1, 4}` (вт, пт) |
+| `notifications/horoscope.py` | `CHECK_INTERVAL_SECONDS` | 1800 (30 мин) |
+
+#### Кэш
+
+Таблица **`horoscopes`**:
+- `user_id` FK, `date` (timestamptz, начало дня UTC), `text` (TEXT).
+- UNIQUE(user_id, date).
+
+**Зачем:** AI-запрос дорогой, а юзер может получить гороскоп 2 раза
+(если попадёт под несколько запусков цикла). Кэш гарантирует
+**один гороскоп в день**.
+
+#### Формат
+
+- AI возвращает **2-3 строки** с юмором, начиная с эмодзи (🔮/✨/🌙/🌟/🎲).
+- `<i>...</i>` для предсказания.
+- Обёртка в сообщении: `🔮 ГОРОСКОП ВАЙБА\n\n{text}`.
+
+### События Этапа 2
+
+| Событие | Когда | Payload |
+|---|---|---|
+| `karma_rolled` | Выпала карма | `{points}` |
+| `horoscope_generated` | AI сгенерил гороскоп (кэш-мисс) | — |
+| `horoscope_cached` | Гороскоп взят из кэша | — |
+| `horoscope_sent` | Hub отправил гороскоп | `{kind}` |
+| `secret_feature_sent` | Hub отправил подсказку | `{kind}` |
+
+### Расписание (по TZ юзера)
+
+| Время | Что | Частота |
+|---|---|---|
+| **10:00** | 🔮 Гороскоп | вт, пт |
+| **13:00** | 💡 Секретная фича | если не заходил 2+ дня |
+| **19:00** | 🗓 Вайб-отчёт | вс |
+| **20:00** | 😂 Daily result | ежедневно |
+| **При заходе** | 🎁 Карма дня | 1 раз в день |
+
+**Максимум проактивных уведомлений: 2 в день** (через hub).
+
+### Как тестировать
+
+**Секретная фича:**
+1. В `services/engagement/secret_feature.py` поставь `MIN_DAYS_AWAY = 0`.
+2. В `services/notifications/secret_feature.py` поставь `TARGET_HOUR` = текущий час.
+3. Redeploy → жди до 30 минут → `[SECRET] queued user=... tip=...` в логах.
+4. **Откати** значения.
+
+**Гороскоп:**
+1. В `services/notifications/horoscope.py` поставь `TARGET_HOUR` = текущий,
+   `TARGET_WEEKDAYS = {0,1,2,3,4,5,6}`.
+2. Redeploy → жди до 30 минут → `[HOROSCOPE] queued user=...`.
+3. В БД: `SELECT * FROM horoscopes WHERE user_id=...`.
+4. **Откати** значения.
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| Подсказки повторялись одному юзеру | Ротация через `RewardClaim tip_seen_<code>` |
+| Гороскоп генерился дважды в день | Кэш `horoscopes` UNIQUE(user_id, date) |
+| Секретная фича шла активным | `should_send(last_active_at)` — только 2..60 дней |
+| Гороскоп отправлялся каждый день | `TARGET_WEEKDAYS = {1, 4}` |
+| `generate_horoscope` возвращал JSON | Промт требует текст, парсим как строку |
+| Hub не находил `horoscope_enabled` в feature flags | Используется дефолт `True` (нет в DEFAULTS) |
+
+### Точка отката
+
+- **Отключить секретную фичу:** `is_enabled("secret_feature_enabled", default=False)`
+  в `notifications/secret_feature.py` (или через UI настроек).
+- **Отключить гороскоп:** `is_enabled("horoscope_enabled", default=False)`
+  в `notifications/horoscope.py` (или через UI).

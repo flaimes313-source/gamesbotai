@@ -10,6 +10,7 @@ from gigachat.models import Chat, Messages, MessagesRole
 from config import config
 from prompts.chat_helper import CHAT_ANALYSIS_PROMPT, CHAT_REPLY_PROMPT
 from prompts.daily_result import DAILY_RESULT_PROMPT
+from prompts.horoscope import HOROSCOPE_PROMPT
 from prompts.match_description import MATCH_DESCRIPTION_PROMPT
 from prompts.message_helper import MESSAGE_HELPER_PROMPT
 from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
@@ -36,7 +37,6 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
         return "image/bmp", "bmp"
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp", "webp"
-    # fallback — Telegram по умолчанию шлёт JPEG
     return "image/jpeg", "jpg"
 
 
@@ -44,35 +44,14 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
 # Утилиты: устойчивый парсинг JSON
 # ============================================================
 def _try_fix_json(text: str) -> str:
-    """
-    Автопочинка частых ошибок LLM в JSON:
-
-    1. Пропущенная запятая между двумя строками в массиве.
-    2. Висящая запятая перед закрывающей скобкой.
-    3. Одинарные кавычки вокруг ключей/значений (простой случай).
-    """
     s = text
-
-    # 1. Убираем висящие запятые перед ] или }
     s = re.sub(r",(\s*[}\]])", r"\1", s)
-
-    # 2. Добавляем запятую между двумя строками в массиве.
     s = re.sub(r'"\s*\n\s*"', '",\n    "', s)
-
-    # 3. Иногда пропущена запятая в одной строке: "...текст" "текст..."
     s = re.sub(r'"\s+"', '", "', s)
-
     return s
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """
-    Достаём JSON из ответа модели.
-    Пробуем несколько стратегий:
-    1. Как есть.
-    2. Отрезаем первый {...} блок и парсим.
-    3. Пробуем починить типичные ошибки и парсить снова.
-    """
     if not text:
         raise ValueError("Empty AI response")
 
@@ -87,13 +66,11 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
     json_str = cleaned[start : end + 1]
 
-    # Попытка 1: как есть
     try:
         return json.loads(json_str)
     except json.JSONDecodeError as e1:
         logger.warning(f"[JSON] First parse failed: {e1}. Trying to fix…")
 
-    # Попытка 2: автопочинка
     fixed = _try_fix_json(json_str)
     try:
         return json.loads(fixed)
@@ -109,45 +86,27 @@ def _extract_json(text: str) -> Dict[str, Any]:
 # Утилита: разбор текстового ответа вайб-отчёта
 # ============================================================
 def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
-    """
-    GigaChat для вайб-отчёта возвращает ТЕКСТ (не JSON).
-    Формат ответа промта:
-
-        [SUMMARY]
-        короткая фраза для картинки
-
-        [REPORT]
-        основной текст отчёта
-
-        [RECOMMENDATION]
-        одна рекомендация
-    """
     text = (raw or "").strip()
 
     summary = ""
     report = text
     recommendation = ""
 
-    # [SUMMARY]
     m = re.search(r"\[SUMMARY\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         summary = m.group(1).strip()
 
-    # [REPORT]
     m = re.search(r"\[REPORT\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         report = m.group(1).strip()
 
-    # [RECOMMENDATION]
     m = re.search(r"\[RECOMMENDATION\]\s*(.+?)(?=\n\s*\[|\Z)", text, re.DOTALL | re.IGNORECASE)
     if m:
         recommendation = m.group(1).strip()
 
-    # Fallback: если ни один маркер не найден — считаем весь текст отчётом
     if not summary and not report and not recommendation:
         report = text
 
-    # Если summary пуст — берём первое предложение отчёта
     if not summary and report:
         first_sentence = re.split(r"[.!?]\s", report, maxsplit=1)[0]
         summary = (first_sentence[:120] + "…") if len(first_sentence) > 120 else first_sentence
@@ -177,9 +136,6 @@ class GigaChatProvider(AIProvider):
             f"vision_model={config.GIGACHAT_VISION_MODEL}"
         )
 
-    # --------------------------------------------------------
-    # Низкоуровневый вызов чата
-    # --------------------------------------------------------
     async def _chat(
         self,
         messages: List[Messages],
@@ -205,9 +161,6 @@ class GigaChatProvider(AIProvider):
 
         return await asyncio.to_thread(_sync_call)
 
-    # --------------------------------------------------------
-    # Утилита: вызов с retry на битый JSON
-    # --------------------------------------------------------
     async def _chat_json(
         self,
         messages: List[Messages],
@@ -217,12 +170,6 @@ class GigaChatProvider(AIProvider):
         model: Optional[str] = None,
         log_tag: str = "JSON",
     ) -> Dict[str, Any]:
-        """
-        Двухэтапный вызов:
-        1. temperature_first → парсим JSON.
-        2. Если не получилось — temperature_retry (ниже) → парсим JSON.
-        """
-        # Попытка 1
         try:
             raw = await self._chat(
                 messages,
@@ -234,7 +181,6 @@ class GigaChatProvider(AIProvider):
         except Exception as e1:
             logger.warning(f"[{log_tag}] Attempt 1 failed: {e1}. Retrying with temp={temperature_retry}…")
 
-        # Попытка 2
         raw = await self._chat(
             messages,
             temperature=temperature_retry,
@@ -288,9 +234,6 @@ class GigaChatProvider(AIProvider):
         logger.info(f"GigaChat photo analysis raw: {raw[:300]}")
         return _extract_json(raw)
 
-    # --------------------------------------------------------
-    # Ежедневный результат
-    # --------------------------------------------------------
     async def generate_daily_result(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         prompt = DAILY_RESULT_PROMPT.format(
             archetype=profile.get("archetype", ""),
@@ -309,9 +252,6 @@ class GigaChatProvider(AIProvider):
             log_tag="DAILY",
         )
 
-    # --------------------------------------------------------
-    # Описание Match
-    # --------------------------------------------------------
     async def generate_match_description(
         self,
         profile1: Dict[str, Any],
@@ -342,9 +282,6 @@ class GigaChatProvider(AIProvider):
             log_tag="MATCH",
         )
 
-    # --------------------------------------------------------
-    # Варианты первого сообщения
-    # --------------------------------------------------------
     async def generate_message_suggestions(
         self,
         my_archetype: str,
@@ -367,9 +304,6 @@ class GigaChatProvider(AIProvider):
             log_tag="MSG_HELPER",
         )
 
-    # --------------------------------------------------------
-    # Вопрос теста
-    # --------------------------------------------------------
     async def generate_test_question(
         self,
         test_name: str,
@@ -388,9 +322,6 @@ class GigaChatProvider(AIProvider):
             log_tag="TEST_Q",
         )
 
-    # --------------------------------------------------------
-    # Результат теста
-    # --------------------------------------------------------
     async def generate_test_result(
         self,
         test_name: str,
@@ -410,9 +341,6 @@ class GigaChatProvider(AIProvider):
             log_tag="TEST_R",
         )
 
-    # --------------------------------------------------------
-    # AI-подсказки для ответа в чате (PRO)
-    # --------------------------------------------------------
     async def generate_chat_reply_suggestions(
         self,
         history: List[Dict[str, str]],
@@ -442,9 +370,6 @@ class GigaChatProvider(AIProvider):
             log_tag="CHAT_REPLY",
         )
 
-    # --------------------------------------------------------
-    # Анализ переписки (PRO)
-    # --------------------------------------------------------
     async def analyze_chat(
         self,
         history: List[Dict[str, str]],
@@ -482,16 +407,6 @@ class GigaChatProvider(AIProvider):
         profile_data: Dict[str, Any],
         weekly: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Генерирует персональный вайб-отчёт.
-
-        weekly=False → портрет (по запросу из профиля).
-        weekly=True  → сводка за неделю (для авто-рассылки).
-
-        Возвращает: {"text": str, "summary": str, "recommendation": str}.
-        GigaChat возвращает ТЕКСТ (не JSON), разбираем по маркерам
-        [SUMMARY], [REPORT], [RECOMMENDATION].
-        """
         user = profile_data.get("user", {})
         profiles = profile_data.get("profiles", []) or []
         stats = profile_data.get("stats", {}) or {}
@@ -499,9 +414,8 @@ class GigaChatProvider(AIProvider):
         tops = profile_data.get("tops", {}) or {}
         recommendations = profile_data.get("recommendations", []) or []
 
-        # --- Профили: список архетипов + характеристики ---
         profiles_lines = []
-        for p in profiles[:10]:  # не больше 10 последних — иначе промт раздуется
+        for p in profiles[:10]:
             arch = p.get("archetype", "")
             scores = p.get("scores", {}) or {}
             scores_str = ", ".join(
@@ -513,7 +427,6 @@ class GigaChatProvider(AIProvider):
             )
         profiles_text = "\n".join(profiles_lines) if profiles_lines else "(нет)"
 
-        # --- Топы ---
         tops_lines = []
         if tops.get("charisma_pct") is not None:
             tops_lines.append(f"харизма — топ-{tops['charisma_pct']}%")
@@ -525,7 +438,6 @@ class GigaChatProvider(AIProvider):
             tops_lines.append(f"очки — топ-{tops['points_pct']}%")
         tops_text = "; ".join(tops_lines) if tops_lines else "нет данных"
 
-        # --- Рекомендации (что предложить юзеру) ---
         recs_lines = []
         for r in recommendations[:3]:
             title = r.get("title", "")
@@ -534,7 +446,6 @@ class GigaChatProvider(AIProvider):
                 recs_lines.append(f"- {rtype}: {title}")
         recs_text = "\n".join(recs_lines) if recs_lines else "(нет)"
 
-        # --- Промт ---
         template = VIBE_WEEKLY_PROMPT if weekly else VIBE_REPORT_PROMPT
 
         prompt = template.format(
@@ -555,7 +466,6 @@ class GigaChatProvider(AIProvider):
             profiles_text=profiles_text,
             tops_text=tops_text,
             recommendations_text=recs_text,
-            # Недельные метрики
             active_days=weekly_data.get("active_days", 0),
             weekly_analyses=weekly_data.get("analyses", 0),
             weekly_messages=weekly_data.get("messages", 0),
@@ -582,3 +492,44 @@ class GigaChatProvider(AIProvider):
             f"rec_len={len(parsed['recommendation'])}"
         )
         return parsed
+
+    # --------------------------------------------------------
+    # Гороскоп (Этап 2)
+    # --------------------------------------------------------
+    async def generate_horoscope(
+        self,
+        profile_data: Dict[str, Any],
+    ) -> str:
+        """
+        Короткий шутливый гороскоп. Возвращает строку (HTML).
+        """
+        prompt = HOROSCOPE_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+            vibe=profile_data.get("vibe", ""),
+            chaos=profile_data.get("chaos", 0),
+            charisma=profile_data.get("charisma", 0),
+            humor=profile_data.get("humor", 0),
+            energy=profile_data.get("energy", 0),
+            intellect=profile_data.get("intellect", 0),
+            current_streak=profile_data.get("current_streak", 0),
+            level=profile_data.get("level", 1),
+            level_title=profile_data.get("level_title", ""),
+        )
+
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+
+        raw = await self._chat(
+            messages,
+            temperature=0.95,
+            max_tokens=250,
+        )
+
+        # Чистим от markdown-обёрток, если AI их добавил
+        text = (raw or "").strip()
+        text = re.sub(r"^```[a-z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+
+        logger.info(f"[HOROSCOPE] raw len={len(text)}")
+        return text

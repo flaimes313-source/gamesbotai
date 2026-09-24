@@ -106,8 +106,10 @@ EVENT_NAMES = {
     "premium_reminder_sent",
 
     # Этап 2 — Фичи вовлечения
-    # karma_rolled — выпала карма дня (при заходе)
-    "karma_rolled",
+    "karma_rolled",                # выпала карма дня
+    "horoscope_generated",         # AI сгенерил гороскоп (кэш-мисс)
+    "horoscope_cached",            # гороскоп взят из кэша
+    # horoscope_sent уже выше (hub)
 
     # Старые события (для совместимости)
     "message_sent",
