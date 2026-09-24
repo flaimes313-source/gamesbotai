@@ -61,6 +61,9 @@ try:
     _log_boot("Importing weekly vibe sender...")
     from services.notifications.vibe_weekly import weekly_vibe_loop
 
+    _log_boot("Importing secret feature sender...")
+    from services.notifications.secret_feature import secret_feature_loop
+
     _log_boot("Importing notification hub...")
     from services.notifications.hub import notification_worker_loop
 
@@ -193,6 +196,12 @@ async def main() -> None:
         asyncio.create_task(weekly_vibe_loop(bot))
     except Exception:
         logger.exception("Failed to start weekly vibe loop")
+
+    logger.info("Starting secret feature loop...")
+    try:
+        asyncio.create_task(secret_feature_loop(bot))
+    except Exception:
+        logger.exception("Failed to start secret feature loop")
 
     logger.info("Starting notification hub worker...")
     try:
