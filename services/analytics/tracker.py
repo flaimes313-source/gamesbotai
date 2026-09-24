@@ -98,14 +98,16 @@ EVENT_NAMES = {
     "vibe_weekly_sent",
 
     # Этап 1 — Уведомления (инфраструктура)
-    # UI настроек
-    "notif_menu_viewed",           # юзер открыл ⚙️ → 🔔 Уведомления
-    "notif_toggle",                # юзер переключил тумблер
-    # Отправки через hub
-    "horoscope_sent",              # отправлен гороскоп
-    "secret_feature_sent",         # отправлена секретная фича дня
-    "profile_views_sent",          # отправлено уведомление о просмотрах профиля
-    "premium_reminder_sent",       # отправлено напоминание о PRO (агрегат)
+    "notif_menu_viewed",
+    "notif_toggle",
+    "horoscope_sent",
+    "secret_feature_sent",
+    "profile_views_sent",
+    "premium_reminder_sent",
+
+    # Этап 2 — Фичи вовлечения
+    # karma_rolled — выпала карма дня (при заходе)
+    "karma_rolled",
 
     # Старые события (для совместимости)
     "message_sent",

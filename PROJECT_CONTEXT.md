@@ -1406,3 +1406,214 @@ Fallback: если маркеров нет — весь текст в `text`, п
 Если нужно выключить фичу целиком:
 - **По запросу:** закомментировать кнопку в `bot/keyboards/profile.py`.
 - **Недельная:** `is_enabled("weekly_vibe_enabled", default=True)` в `vibe_weekly.py` → поставить `default=False`.
+
+---
+
+## 19. ЭТАП 1 + ЭТАП 2 — ВОВЛЕЧЕНИЕ И УВЕДОМЛЕНИЯ (2026-09-24)
+
+### Кратко
+
+- **Этап 1 — Инфраструктура уведомлений.** Единый сервис `hub.py`,
+  настройки юзера, тихие часы, дневной лимит, очередь.
+- **Этап 2 — Карма дня.** Случайный бонус очков при первом заходе.
+
+### Этап 1: Инфраструктура уведомлений
+
+#### Зачем
+
+Раньше у каждого типа уведомлений был свой `*_loop`
+(`daily_sender`, `chat_reminder`, `premium_reminder`, `tops_sender`,
+`vibe_weekly`). Логика тихих часов и лимитов дублировалась. С ростом
+фич это превращается в кашу — поэтому построили центральный хаб.
+
+#### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `services/notifications/hub.py` | Единый сервис: очередь, проверки, воркер |
+| `bot/handlers/settings_notifications.py` | UI настроек (7 тумблеров) |
+
+#### Новые таблицы
+
+| Таблица | Что |
+|---|---|
+| `user_notification_settings` | Тумблеры категорий (7 штук, по умолчанию все True) |
+| `profile_views` | Лог просмотров профилей (viewer_id, viewed_id, source) |
+| `horoscopes` | Кэш гороскопов (user_id, date, text) UNIQUE(user_id, date) |
+
+#### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `database/models.py` | 3 новые таблицы |
+| `database/init_db.py` | Миграции |
+| `bot/keyboards/main.py` | Кнопка «🔔 Уведомления» в `settings_kb()` |
+| `bot/handlers/__init__.py` | Регистрация `settings_notifications.router` |
+| `services/analytics/tracker.py` | События `notif_menu_viewed`, `notif_toggle`, `horoscope_sent`, `secret_feature_sent`, `profile_views_sent`, `premium_reminder_sent` |
+| `main.py` | Запуск `notification_worker_loop` |
+
+#### Как работает hub
+
+```
+schedule_notification(user_id, kind, priority, payload, tz_name)
+  ↓
+can_send_now():
+  1. feature flag (KIND_TO_FLAG)
+  2. настройки юзера (KIND_TO_SETTING)
+  3. тихие часы (23:00–08:00 TZ)
+  4. дневной лимит (MAX_DAILY_PROACTIVE=2)
+  5. дубли (уже слали сегодня?)
+  ↓
+очередь (in-memory, {user_id: [items]})
+  ↓
+notification_worker_loop (раз в 15 мин)
+  ↓
+_send_notification → track(event_name)
+```
+
+#### Константы
+
+| Константа | Значение |
+|---|---|
+| `MAX_DAILY_PROACTIVE` | 2 |
+| `PRIORITY_DROP_THRESHOLD` | 4 |
+| `WORKER_INTERVAL_SECONDS` | 900 (15 мин) |
+
+**Логика приоритета:** если дневной лимит набран, отбрасываются только
+низкоприоритетные (priority >= 4). Высокоприоритетные (1-3) — проходят.
+
+#### Маппинги (kind → ...)
+
+| kind | feature flag | setting | event |
+|---|---|---|---|
+| `daily_result` | `daily_content_enabled` | `daily_result_enabled` | `daily_sent` |
+| `horoscope` | `horoscope_enabled` | `horoscope_enabled` | `horoscope_sent` |
+| `secret_feature` | `secret_feature_enabled` | `secret_feature_enabled` | `secret_feature_sent` |
+| `profile_views` | `profile_views_enabled` | `profile_views_enabled` | `profile_views_sent` |
+| `weekly_vibe` | `weekly_vibe_enabled` | `weekly_vibe_enabled` | `vibe_weekly_sent` |
+| `tops` | `tops_enabled` | `tops_enabled` | `tops_sent` |
+| `premium_reminder` | `premium_reminder_enabled` | `premium_reminder_enabled` | `premium_reminder_sent` |
+
+**Примечание:** feature flags `horoscope_enabled`, `secret_feature_enabled`,
+`profile_views_enabled`, `weekly_vibe_enabled`, `tops_enabled`,
+`premium_reminder_enabled` **не заведены в `ensure_flags_exist`** — они
+используются через дефолт `True` при отсутствии в БД. Если захочешь
+глобально выключать — добавь в `DEFAULTS` в `feature_flags.py`.
+
+#### UI настроек
+
+`⚙️ Настройки` → `🔔 Уведомления` → 7 тумблеров (✅/❌).
+Callback: `notif_menu`, `notif_toggle_<name>`.
+
+### Этап 2: Карма дня
+
+#### Что
+
+При **первом заходе за день** юзер получает случайный бонус очков.
+
+#### Шансы
+
+| Шанс | Очки |
+|---|---|
+| 70% | +10 |
+| 20% | +30 |
+| 8% | +50 |
+| 2% | +100 (джекпот) |
+
+Максимум за раз: **100 очков**. Средний выхлоп: ~18 очков.
+
+#### Как работает
+
+```
+/start
+  ↓
+on_user_visit (стрик)
+  ↓
+roll_karma_for_today(user_id)
+  ├── уже получал сегодня? → None (тихо)
+  ├── roll: random.random()
+  ├── RewardClaim(reward_code="karma_YYYY-MM-DD")
+  └── add_custom_points(user_id, points)
+  ↓
+format_karma_message(karma) → message.answer()
+```
+
+#### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `services/engagement/karma.py` | `roll_karma_for_today`, `format_karma_message` |
+
+#### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `bot/handlers/start.py` | Вызов кармы после главного меню |
+| `services/analytics/tracker.py` | Событие `karma_rolled` |
+
+#### Защита от дублей
+
+- **`RewardClaim`** с `reward_code="karma_YYYY-MM-DD"` (UNIQUE user_id + reward_code).
+- При гонке (два `/start` одновременно) — один поймает `IntegrityError`,
+  тихо выйдет, очки не удвоятся.
+
+#### Если `add_custom_points` падает
+
+`RewardClaim` уже записан → награда «сгорает». Это осознанный компромисс:
+лучше так, чем дать юзеру бесконечные попытки.
+
+### События Этапа 1+2
+
+| Событие | Когда | Payload |
+|---|---|---|
+| `notif_menu_viewed` | Открыл настройки уведомлений | — |
+| `notif_toggle` | Переключил тумблер | `{field, value}` |
+| `karma_rolled` | Выпала карма дня | `{points}` |
+| `horoscope_sent` | Отправлен гороскоп (пока не летит) | `{kind}` |
+| `secret_feature_sent` | Отправлена секретная фича (пока не летит) | `{kind}` |
+| `profile_views_sent` | Отправлено уведомление о просмотрах (пока не летит) | `{kind}` |
+| `premium_reminder_sent` | Отправлено PRO-напоминание | `{kind}` |
+
+### Порядок воркеров в main.py
+
+```
+daily_loop
+chat_reminder_loop
+db_cleanup_loop
+premium_reminder_loop
+tops_loop
+weekly_vibe_loop
+notification_worker_loop  ← новый
+start_polling
+```
+
+### Как тестировать
+
+**Этап 1 — настройки уведомлений:**
+1. `/start` → `⚙️ Настройки` → `🔔 Уведомления`.
+2. 7 тумблеров, все ✅.
+3. Нажми — переключится на ❌. Нажми ещё раз — обратно.
+4. В БД: `SELECT * FROM user_notification_settings WHERE user_id=...`.
+
+**Этап 2 — карма:**
+1. `/start`.
+2. После главного меню должно прийти **«🎁 КАРМА ДНЯ»** с очками.
+3. Повторный `/start` в тот же день — кармы **нет**.
+4. В БД: `SELECT * FROM reward_claims WHERE reward_code LIKE 'karma_%'`.
+5. В БД: `SELECT * FROM events WHERE name='karma_rolled' ORDER BY id DESC LIMIT 5`.
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| Логика тихих часов дублировалась в 5 файлах | Централизовали в `hub.py` |
+| Юзер не мог отключить уведомления | Таблица `user_notification_settings` + UI |
+| Карма могла начислиться дважды | `RewardClaim` с UNIQUE + защита от `IntegrityError` |
+| `add_custom_points` внутри `async with` — вложенная сессия | Вынес за пределы сессии (`roll_karma_for_today`) |
+| `notif_toggle_*` callback не ловился | Регистрация `settings_notifications.router` в `__init__.py` |
+
+### Точка отката
+
+- **Отключить уведомления глобально:** в `feature_flags.py` добавить
+  в `DEFAULTS` ключи `horoscope_enabled: False` и т.п.
+- **Отключить карму:** закомментировать блок `Karma roll` в `start.py`.

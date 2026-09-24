@@ -228,6 +228,18 @@ async def cmd_start(message: Message):
 
     await message.answer(text, reply_markup=main_menu_kb())
 
+    # 🎁 Карма дня — раз в день, отдельным сообщением
+    try:
+        from services.engagement.karma import (
+            roll_karma_for_today,
+            format_karma_message,
+        )
+        karma = await roll_karma_for_today(user.id)
+        if karma is not None:
+            await message.answer(format_karma_message(karma))
+    except Exception:
+        logger.exception("Karma roll failed")
+
     # Отправляем накопленные уведомления (стрик и т.д.)
     try:
         from services.engagement.notifications import flush_notifications
