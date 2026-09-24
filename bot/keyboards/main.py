@@ -90,6 +90,7 @@ def settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Приватность", callback_data="privacy_settings")],
+            [InlineKeyboardButton(text="🔔 Уведомления", callback_data="notif_menu")],
             [InlineKeyboardButton(text="🌍 Часовой пояс", callback_data="tz_menu")],
             [InlineKeyboardButton(text="🎮 Социальная игра", callback_data="game_menu")],
             [InlineKeyboardButton(text="💎 PRO", callback_data="pro_menu")],

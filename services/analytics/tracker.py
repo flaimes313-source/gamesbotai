@@ -90,16 +90,22 @@ EVENT_NAMES = {
     "dynamics_viewed",
 
     # Легендарные архетипы (Шаг 1.2)
-    # legendary_archetype — выпал легендарный архетип
-    # legendary_achievement — выдано достижение за легендарку
     "legendary_archetype",
     "legendary_achievement",
 
     # Вайб-отчёт (Шаг 1.3)
-    # vibe_report_viewed — юзер открыл/обновил отчёт по запросу
-    # vibe_weekly_sent — недельная сводка отправлена юзеру
     "vibe_report_viewed",
     "vibe_weekly_sent",
+
+    # Этап 1 — Уведомления (инфраструктура)
+    # UI настроек
+    "notif_menu_viewed",           # юзер открыл ⚙️ → 🔔 Уведомления
+    "notif_toggle",                # юзер переключил тумблер
+    # Отправки через hub
+    "horoscope_sent",              # отправлен гороскоп
+    "secret_feature_sent",         # отправлена секретная фича дня
+    "profile_views_sent",          # отправлено уведомление о просмотрах профиля
+    "premium_reminder_sent",       # отправлено напоминание о PRO (агрегат)
 
     # Старые события (для совместимости)
     "message_sent",

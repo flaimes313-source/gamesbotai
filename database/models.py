@@ -675,3 +675,85 @@ class UserQuestProgress(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "quest_id", name="uq_user_quest"),
     )
+
+
+# ============================================================
+# NOTIFICATION SETTINGS (Этап 1 — Инфраструктура уведомлений)
+# ============================================================
+class UserNotificationSettings(Base):
+    """
+    Тумблеры категорий уведомлений.
+    Создаётся лениво — при первой попытке прочитать настройки юзера.
+    Значения по умолчанию: все включены, кроме `secret_feature`
+    (её включаем сразу, но по умолчанию — True, чтобы фича работала).
+    """
+    __tablename__ = "user_notification_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+
+    # Категории — все по умолчанию включены
+    daily_result_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    horoscope_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    secret_feature_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    profile_views_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    weekly_vibe_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    tops_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    premium_reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# ============================================================
+# PROFILE VIEWS (лог просмотров профилей)
+# ============================================================
+class ProfileView(Base):
+    """
+    Лог того, кто смотрел чей профиль.
+    Источники (source): matching / compare / tops / search.
+    Используется для:
+    - фичи «Кто-то посмотрел твой профиль» (косвенно),
+    - аналитики.
+    """
+    __tablename__ = "profile_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    viewer_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    viewed_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), default="matching")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+# ============================================================
+# HOROSCOPES (кэш гороскопов)
+# ============================================================
+class Horoscope(Base):
+    """
+    Кэш гороскопов. Один гороскоп на (user_id, date).
+    Генерится через AI 1 раз, хранится в БД, чтобы при повторной
+    отправке не тратить токены.
+    """
+    __tablename__ = "horoscopes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_horoscope_user_date"),
+    )

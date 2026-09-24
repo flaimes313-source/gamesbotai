@@ -61,6 +61,9 @@ try:
     _log_boot("Importing weekly vibe sender...")
     from services.notifications.vibe_weekly import weekly_vibe_loop
 
+    _log_boot("Importing notification hub...")
+    from services.notifications.hub import notification_worker_loop
+
     _log_boot("All imports OK")
 except Exception as e:
     print(f"[BOOT ERROR] Import failed: {e}", flush=True)
@@ -190,6 +193,12 @@ async def main() -> None:
         asyncio.create_task(weekly_vibe_loop(bot))
     except Exception:
         logger.exception("Failed to start weekly vibe loop")
+
+    logger.info("Starting notification hub worker...")
+    try:
+        asyncio.create_task(notification_worker_loop(bot))
+    except Exception:
+        logger.exception("Failed to start notification hub worker")
 
     logger.info("Polling started.")
     try:

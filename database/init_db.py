@@ -53,9 +53,58 @@ MIGRATIONS = [
 
     # Legendary archetypes (Шаг 1.2)
     # Дата последнего выпадения легендарного архетипа.
-    # NULL = юзер ещё не получал легендарных. Используется
-    # в services/analysis/rarity.py для cooldown 7 дней.
+    # NULL = юзер ещё не получал легендарных.
     "ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS last_legendary_at TIMESTAMPTZ;",
+
+    # ============================================================
+    # Этап 1 — Уведомления (инфраструктура)
+    # ============================================================
+
+    # Настройки уведомлений
+    """
+    CREATE TABLE IF NOT EXISTS user_notification_settings (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        daily_result_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        horoscope_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        secret_feature_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        profile_views_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        weekly_vibe_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        tops_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        premium_reminder_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_notification_settings_user_id ON user_notification_settings (user_id);",
+
+    # Просмотры профиля
+    """
+    CREATE TABLE IF NOT EXISTS profile_views (
+        id SERIAL PRIMARY KEY,
+        viewer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        viewed_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source VARCHAR(32) NOT NULL DEFAULT 'matching',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_profile_views_viewer_id ON profile_views (viewer_id);",
+    "CREATE INDEX IF NOT EXISTS ix_profile_views_viewed_id ON profile_views (viewed_id);",
+    "CREATE INDEX IF NOT EXISTS ix_profile_views_created_at ON profile_views (created_at);",
+
+    # Гороскопы
+    """
+    CREATE TABLE IF NOT EXISTS horoscopes (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        date TIMESTAMPTZ NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_horoscope_user_date UNIQUE (user_id, date)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_horoscopes_user_id ON horoscopes (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_horoscopes_date ON horoscopes (date);",
 ]
 
 

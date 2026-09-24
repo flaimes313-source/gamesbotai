@@ -5,6 +5,7 @@ from bot.handlers import (
     analysis,
     profile,
     vibe_report,
+    settings_notifications,
     matching,
     compare,
     tests,
@@ -37,10 +38,11 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(start.router)
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
-    root_router.include_router(vibe_report.router)   # ← 🧠 Вайб-отчёт
+    root_router.include_router(vibe_report.router)            # ← 🧠 Вайб-отчёт
+    root_router.include_router(settings_notifications.router) # ← 🔔 Уведомления
     root_router.include_router(timezone.router)
     root_router.include_router(engagement.router)
-    root_router.include_router(info.router)         # ← О боте
+    root_router.include_router(info.router)                   # ← О боте
     root_router.include_router(matching.router)
     root_router.include_router(compare.router)
     root_router.include_router(tests.router)
