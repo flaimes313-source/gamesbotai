@@ -212,10 +212,12 @@ async def cmd_start(message: Message):
     except Exception:
         logger.exception("Engagement on_user_visit failed")
 
+    # Карточка пригласившего (если есть реферер)
     if referrer_id:
         await _send_referrer_card(message, referrer_id)
 
-        text = (
+    # Приветственное сообщение — ВСЕГДА, независимо от реферера
+    text = (
         "🔥 <b>Вайбми — узнай свой вайб</b>\n\n"
         "Отправь фото → получи свой архетип → поделись результатом 😂\n\n"
         "👤 Анализ фото\n"
