@@ -4,7 +4,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import func, select
 
 from admin.subscriptions_wizard import start_wizard
@@ -13,7 +13,10 @@ from bot.keyboards.admin import (
     ads_menu_kb,
     flags_menu_kb,
     promos_menu_kb,
+    subs_back_kb,
+    subs_campaign_card_kb,
     subs_menu_kb,
+    subs_subscribers_kb,
 )
 from config import config
 from database.connection import async_session
@@ -32,6 +35,15 @@ from services.experiments_report import ab_photo_prompt_report, format_ab_report
 from services.feature_flags import DEFAULTS as DEFAULT_FLAGS
 from services.feature_flags import get_all_flags, is_enabled, set_flag
 from services.metrics import chats_stats, full_stats
+from services.subscriptions.reports import (
+    export_to_csv,
+    format_campaign_card,
+    format_daily_breakdown,
+    format_subscribers_list,
+    get_campaign_daily_breakdown,
+    get_campaign_stats,
+    get_campaign_subscribers,
+)
 from services.whitelist import add_to_whitelist, remove_from_whitelist
 from utils.logging import get_logger
 
@@ -39,6 +51,8 @@ router = Router()
 logger = get_logger(__name__)
 
 ADMIN_STATE: dict[int, dict] = {}
+
+SUBS_PAGE_SIZE = 50
 
 
 def _is_admin(telegram_id: int) -> bool:
@@ -359,13 +373,270 @@ async def cb_subs_list(callback: CallbackQuery):
     if not rows:
         await callback.message.answer("Кампаний нет.")
         return
+
+    # Каждая кампания — отдельная inline-кнопка
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb_rows = []
     lines = ["📋 <b>Кампании подписок</b>\n"]
     for c in rows:
+        status_icon = "🟢" if c.is_active else "🔴"
         lines.append(
-            f"#{c.id} <b>{c.name}</b> [{c.status}] active={c.is_active}\n"
-            f"   канал: {c.channel_username or '—'}, подписок: {c.confirmed_subscribers}/{c.subscriber_limit or '∞'}"
+            f"{status_icon} #{c.id} <b>{c.name}</b>\n"
+            f"   канал: {c.channel_username or '—'}, "
+            f"подписок: {c.confirmed_subscribers}/{c.subscriber_limit or '∞'}"
         )
-    await callback.message.answer("\n".join(lines))
+        kb_rows.append([InlineKeyboardButton(
+            text=f"#{c.id} {c.name[:40]}",
+            callback_data=f"subs_card_{c.id}",
+        )])
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_subs")])
+
+    try:
+        await callback.message.answer(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        )
+    except Exception:
+        await callback.message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data == "subs_summary")
+async def cb_subs_summary(callback: CallbackQuery):
+    """Сводка по всем активным кампаниям."""
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(SubscriptionCampaign).order_by(SubscriptionCampaign.id.desc())
+        )).scalars().all()
+
+    if not rows:
+        await callback.message.answer("Кампаний нет.")
+        return
+
+    total_confirmed = 0
+    total_cost = 0.0
+
+    lines = ["📊 <b>СВОДКА ПО ВСЕМ КАМПАНИЯМ</b>\n"]
+    for c in rows:
+        price = float(c.price_per_subscription or 0)
+        cost = price * c.confirmed_subscribers
+        total_confirmed += c.confirmed_subscribers
+        total_cost += cost
+
+        status_icon = "🟢" if c.is_active else "🔴"
+        lines.append(
+            f"{status_icon} <b>{c.name}</b>\n"
+            f"   подписок: {c.confirmed_subscribers} × {price:.0f} ₽ = <b>{cost:.0f} ₽</b>"
+        )
+
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━")
+    lines.append(
+        f"<b>Итого: {total_confirmed} подписчиков, {total_cost:.0f} ₽</b>"
+    )
+
+    await callback.message.answer(
+        "\n".join(lines),
+        reply_markup=subs_back_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("subs_card_"))
+async def cb_subs_card(callback: CallbackQuery):
+    """Карточка кампании."""
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        campaign_id = int(callback.data.replace("subs_card_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    stats = await get_campaign_stats(campaign_id)
+    if stats is None:
+        await callback.message.answer("Кампания не найдена.")
+        return
+
+    text = format_campaign_card(stats)
+    kb = subs_campaign_card_kb(campaign_id, stats["campaign"]["is_active"])
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("subs_subs_"))
+async def cb_subs_subscribers(callback: CallbackQuery):
+    """Список подписчиков."""
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    # Парсим: subs_subs_5 или subs_subs_5_p2
+    data = callback.data.replace("subs_subs_", "")
+    page = 1
+    if "_p" in data:
+        cid_str, p_str = data.split("_p", 1)
+        try:
+            page = max(1, int(p_str))
+        except ValueError:
+            page = 1
+        campaign_id = int(cid_str)
+    else:
+        campaign_id = int(data)
+
+    stats = await get_campaign_stats(campaign_id)
+    if stats is None:
+        await callback.message.answer("Кампания не найдена.")
+        return
+
+    confirmed_total = stats["counts"]["confirmed"]
+    offset = (page - 1) * SUBS_PAGE_SIZE
+
+    subscribers = await get_campaign_subscribers(
+        campaign_id,
+        limit=SUBS_PAGE_SIZE,
+        offset=offset,
+        only_confirmed=True,
+    )
+
+    has_next = (offset + SUBS_PAGE_SIZE) < confirmed_total
+
+    text = format_subscribers_list(
+        subscribers,
+        total=confirmed_total,
+        page=page,
+        per_page=SUBS_PAGE_SIZE,
+        only_confirmed=True,
+    )
+    text += f"\n\nСтраница {page}"
+    if has_next:
+        text += " (есть ещё)"
+
+    kb = subs_subscribers_kb(campaign_id, page, has_next)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("subs_daily_"))
+async def cb_subs_daily(callback: CallbackQuery):
+    """Разбивка по дням."""
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        campaign_id = int(callback.data.replace("subs_daily_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    stats = await get_campaign_stats(campaign_id)
+    if stats is None:
+        await callback.message.answer("Кампания не найдена.")
+        return
+
+    breakdown = await get_campaign_daily_breakdown(campaign_id)
+
+    text = format_daily_breakdown(
+        breakdown,
+        campaign_name=stats["campaign"]["name"],
+        price=stats["campaign"]["price_per_subscription"],
+    )
+
+    try:
+        await callback.message.edit_text(text, reply_markup=subs_back_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=subs_back_kb())
+
+
+@router.callback_query(F.data.startswith("subs_export_"))
+async def cb_subs_export(callback: CallbackQuery):
+    """Экспорт в CSV."""
+    await _safe_answer(callback, "Готовлю CSV…")
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        campaign_id = int(callback.data.replace("subs_export_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    stats = await get_campaign_stats(campaign_id)
+    if stats is None:
+        await callback.message.answer("Кампания не найдена.")
+        return
+
+    csv_bytes = await export_to_csv(campaign_id, only_confirmed=True)
+    if not csv_bytes:
+        await callback.message.answer("Не удалось подготовить файл.")
+        return
+
+    # Имя файла: campaign_5_2026-09-25.csv
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"campaign_{campaign_id}_{today}.csv"
+
+    try:
+        await callback.message.answer_document(
+            BufferedInputFile(csv_bytes, filename=filename),
+            caption=(
+                f"📤 <b>Экспорт кампании #{campaign_id}</b>\n"
+                f"{stats['campaign']['name']}\n"
+                f"Подписчиков: <b>{stats['counts']['confirmed']}</b>\n"
+                f"Стоимость: <b>{stats['money']['total_cost']:.0f} ₽</b>"
+            ),
+        )
+    except Exception:
+        logger.exception("[SUBS] export send failed")
+        await callback.message.answer("❌ Не удалось отправить файл.")
+
+
+@router.callback_query(F.data.startswith("subs_stop_"))
+async def cb_subs_stop(callback: CallbackQuery):
+    """Остановить кампанию."""
+    await _safe_answer(callback, "Останавливаю…")
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        campaign_id = int(callback.data.replace("subs_stop_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    async with async_session() as session:
+        c = (await session.execute(
+            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
+        )).scalar_one_or_none()
+
+        if c is None:
+            await callback.message.answer("Кампания не найдена.")
+            return
+
+        c.is_active = False
+        c.status = "stopped"
+        c.ended_at = datetime.now(timezone.utc)
+        await session.commit()
+
+    # Обновляем карточку
+    stats = await get_campaign_stats(campaign_id)
+    if stats:
+        text = format_campaign_card(stats)
+        kb = subs_campaign_card_kb(campaign_id, stats["campaign"]["is_active"])
+        try:
+            await callback.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "subs_new")
@@ -559,11 +830,10 @@ async def cmd_reply(message: Message):
 
 
 # ============================================================
-# ВРЕМЕННЫЕ КОМАНДЫ (только для отладки)
+# ВРЕМЕННЫЕ КОМАНДЫ
 # ============================================================
 @router.message(Command("grant_pro"))
 async def cmd_grant_pro(message: Message):
-    """Временный: /grant_pro <tg_id> <days> [reason]"""
     if not _is_admin(message.from_user.id):
         return
     parts = message.text.split(maxsplit=3)
@@ -593,7 +863,6 @@ async def cmd_grant_pro(message: Message):
 
 @router.message(Command("fake_refs"))
 async def cmd_fake_refs(message: Message):
-    """Временный: /fake_refs <count> — создать N фиктивных рефералов."""
     if not _is_admin(message.from_user.id):
         return
     parts = message.text.split()

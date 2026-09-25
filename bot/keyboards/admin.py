@@ -60,9 +60,86 @@ def subs_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Список кампаний", callback_data="subs_list")],
+            [InlineKeyboardButton(text="📊 Сводка по всем", callback_data="subs_summary")],
             [InlineKeyboardButton(text="➕ Новая кампания", callback_data="subs_new")],
             [InlineKeyboardButton(text="🚨 Стоп всё", callback_data="subs_stop_all")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_back")],
+        ]
+    )
+
+
+def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """
+    Клавиатура карточки кампании.
+    Кнопка «Остановить» — только если кампания активна.
+    """
+    rows = [
+        [InlineKeyboardButton(
+            text="📋 Подписчики",
+            callback_data=f"subs_subs_{campaign_id}",
+        )],
+        [InlineKeyboardButton(
+            text="📊 Разбивка по дням",
+            callback_data=f"subs_daily_{campaign_id}",
+        )],
+        [InlineKeyboardButton(
+            text="📤 Экспорт CSV",
+            callback_data=f"subs_export_{campaign_id}",
+        )],
+        [InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data=f"subs_card_{campaign_id}",
+        )],
+    ]
+    if is_active:
+        rows.append([InlineKeyboardButton(
+            text="⏸ Остановить кампанию",
+            callback_data=f"subs_stop_{campaign_id}",
+        )])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ К списку",
+        callback_data="subs_list",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subs_subscribers_kb(campaign_id: int, page: int, has_next: bool = False) -> InlineKeyboardMarkup:
+    """
+    Клавиатура списка подписчиков.
+    """
+    rows = []
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=f"subs_subs_{campaign_id}_p{page - 1}",
+        ))
+    if has_next:
+        nav.append(InlineKeyboardButton(
+            text="Вперёд ➡️",
+            callback_data=f"subs_subs_{campaign_id}_p{page + 1}",
+        ))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(
+        text="📤 Экспорт CSV",
+        callback_data=f"subs_export_{campaign_id}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ К кампании",
+        callback_data=f"subs_card_{campaign_id}",
+    )])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subs_back_kb() -> InlineKeyboardMarkup:
+    """Возврат к списку кампаний."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К списку", callback_data="subs_list")],
         ]
     )
 
@@ -83,11 +160,7 @@ def promos_menu_kb() -> InlineKeyboardMarkup:
 # ============================================================
 # FEATURE FLAGS
 # ============================================================
-def flags_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
-    """
-    Динамическая клавиатура — по кнопке на каждый флаг.
-    ✅ — включён, ❌ — выключен.
-    """
+def flags_menu_kb(flags: dict) -> InlineKeyboardMarkup:
     rows = []
     for key, value in flags.items():
         emoji = "✅" if value else "❌"
@@ -100,7 +173,7 @@ def flags_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# ЧАТЫ (для раздела «💬 Чаты»)
+# ЧАТЫ
 # ============================================================
 def chats_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -116,9 +189,6 @@ def chats_menu_kb() -> InlineKeyboardMarkup:
 # ПОДДЕРЖКА
 # ============================================================
 def support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
-    """
-    Кнопки под конкретным тикетом в админке.
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -134,7 +204,7 @@ def support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# РАССЫЛКА — выбор типа
+# РАССЫЛКА
 # ============================================================
 def broadcast_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -147,9 +217,6 @@ def broadcast_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# РАССЫЛКА — добавление кнопки с URL
-# ============================================================
 def broadcast_add_button_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -166,9 +233,6 @@ def broadcast_add_button_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# РАССЫЛКА — отмена
-# ============================================================
 def broadcast_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -177,9 +241,6 @@ def broadcast_cancel_kb() -> InlineKeyboardMarkup:
     )
 
 
-# ============================================================
-# РАССЫЛКА — подтверждение
-# ============================================================
 def broadcast_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
