@@ -1,3 +1,15 @@
+"""
+FSM-мастер создания кампании обязательной подписки.
+
+Порядок шагов:
+1. Ссылка / @username канала.
+2. Название (автоматически или вручную).
+3. Цена за подписчика (₽).
+4. Лимит подписчиков.
+5. Бюджет кампании (₽).
+6. Финальное подтверждение → создание.
+"""
+
 from datetime import datetime, timezone
 
 from aiogram import F, Router
@@ -30,13 +42,28 @@ def _is_admin(telegram_id: int) -> bool:
 class SubsWizard(StatesGroup):
     waiting_link = State()
     waiting_title_manual = State()
+    waiting_price = State()
+    waiting_limit = State()
+    waiting_budget = State()
     confirming = State()
 
 
 # ============================================================
 # Клавиатуры
 # ============================================================
-def _start_kb() -> InlineKeyboardMarkup:
+def _cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="subs_wiz_cancel")],
+        ]
+    )
+
+
+def _number_kb(prefix: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для числовых шагов: только «Отмена».
+    Юзер вводит число текстом.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="subs_wiz_cancel")],
@@ -72,12 +99,12 @@ async def start_wizard(callback: CallbackQuery, state: FSMContext):
         "• <code>your_channel</code>\n\n"
         "⚠️ Бот должен быть <b>админом</b> этого канала, "
         "иначе не сможет проверять подписки.",
-        reply_markup=_start_kb(),
+        reply_markup=_cancel_kb(),
     )
 
 
 # ============================================================
-# ШАГ 1
+# ШАГ 1: ССЫЛКА
 # ============================================================
 @router.message(SubsWizard.waiting_link)
 async def process_link(message: Message, state: FSMContext):
@@ -147,7 +174,9 @@ async def process_link(message: Message, state: FSMContext):
         is_private=False,
         is_admin=is_admin_in_channel,
     )
-    await state.set_state(SubsWizard.confirming)
+
+    # Переходим к цене
+    await state.set_state(SubsWizard.waiting_price)
 
     warn_line = "" if is_admin_in_channel else (
         "\n\n⚠️ <b>Бот не админ канала!</b>\n"
@@ -161,13 +190,16 @@ async def process_link(message: Message, state: FSMContext):
         f"🆔 @{username}\n"
         f"🔗 {link}"
         f"{warn_line}\n\n"
-        f"Создать кампанию?",
-        reply_markup=_confirm_kb(),
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>Шаг 2. Цена за подписчика</b>\n\n"
+        f"Сколько платим за одного подписчика?\n"
+        f"Пример: <code>15</code> или <code>12.5</code>",
+        reply_markup=_number_kb("price"),
     )
 
 
 # ============================================================
-# ШАГ 2a: название вручную
+# ШАГ 2a: НАЗВАНИЕ ВРУЧНУЮ
 # ============================================================
 @router.message(SubsWizard.waiting_title_manual)
 async def process_title_manual(message: Message, state: FSMContext):
@@ -181,7 +213,7 @@ async def process_title_manual(message: Message, state: FSMContext):
 
     data = await state.get_data()
     await state.update_data(title=title)
-    await state.set_state(SubsWizard.confirming)
+    await state.set_state(SubsWizard.waiting_price)
 
     username = data.get("username")
     link = data.get("link", "")
@@ -200,15 +232,146 @@ async def process_title_manual(message: Message, state: FSMContext):
         )
 
     await message.answer(
-        f"✅ <b>Готово к созданию:</b>\n\n"
-        f"{summary}\n\n"
-        f"Создать кампанию?",
-        reply_markup=_confirm_kb(),
+        f"✅ <b>Сохранено:</b>\n\n{summary}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>Шаг 2. Цена за подписчика</b>\n\n"
+        f"Сколько платим за одного подписчика?\n"
+        f"Пример: <code>15</code> или <code>12.5</code>",
+        reply_markup=_number_kb("price"),
     )
 
 
 # ============================================================
-# ШАГ 3: создание
+# ШАГ 2: ЦЕНА
+# ============================================================
+@router.message(SubsWizard.waiting_price)
+async def process_price(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        return
+
+    text = (message.text or "").strip().replace(",", ".")
+    try:
+        price = float(text)
+    except ValueError:
+        await message.answer("❌ Не похоже на число. Попробуй ещё раз.")
+        return
+
+    if price < 0 or price > 100_000:
+        await message.answer("❌ Цена должна быть от 0 до 100000 ₽.")
+        return
+
+    await state.update_data(price=price)
+    await state.set_state(SubsWizard.waiting_limit)
+
+    await message.answer(
+        f"✅ Цена: <b>{price:.2f} ₽</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👥 <b>Шаг 3. Лимит подписчиков</b>\n\n"
+        f"Сколько максимум подписчиков принять?\n"
+        f"Отправь <code>0</code>, если без лимита.\n"
+        f"Пример: <code>1000</code>",
+        reply_markup=_number_kb("limit"),
+    )
+
+
+# ============================================================
+# ШАГ 3: ЛИМИТ
+# ============================================================
+@router.message(SubsWizard.waiting_limit)
+async def process_limit(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        return
+
+    text = (message.text or "").strip().replace(",", ".")
+    try:
+        limit = int(float(text))
+    except ValueError:
+        await message.answer("❌ Не похоже на число. Попробуй ещё раз.")
+        return
+
+    if limit < 0 or limit > 1_000_000:
+        await message.answer("❌ Лимит должен быть от 0 до 1000000.")
+        return
+
+    await state.update_data(subscriber_limit=limit)
+    await state.set_state(SubsWizard.waiting_budget)
+
+    limit_str = "∞ (без лимита)" if limit == 0 else str(limit)
+
+    await message.answer(
+        f"✅ Лимит: <b>{limit_str}</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💵 <b>Шаг 4. Бюджет кампании</b>\n\n"
+        f"Сколько всего готовы заплатить?\n"
+        f"Отправь <code>0</code>, если без бюджета.\n"
+        f"Пример: <code>5000</code>",
+        reply_markup=_number_kb("budget"),
+    )
+
+
+# ============================================================
+# ШАГ 4: БЮДЖЕТ
+# ============================================================
+@router.message(SubsWizard.waiting_budget)
+async def process_budget(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        return
+
+    text = (message.text or "").strip().replace(",", ".")
+    try:
+        budget = float(text)
+    except ValueError:
+        await message.answer("❌ Не похоже на число. Попробуй ещё раз.")
+        return
+
+    if budget < 0 or budget > 10_000_000:
+        await message.answer("❌ Бюджет должен быть от 0 до 10000000 ₽.")
+        return
+
+    await state.update_data(budget=budget)
+    await state.set_state(SubsWizard.confirming)
+
+    data = await state.get_data()
+    await _show_confirm(message, data)
+
+
+# ============================================================
+# ПОДТВЕРЖДЕНИЕ
+# ============================================================
+async def _show_confirm(message: Message, data: dict) -> None:
+    """Показывает сводку для подтверждения."""
+    title = data.get("title") or "Без названия"
+    username = data.get("username")
+    link = data.get("link", "")
+    is_private = data.get("is_private", False)
+    price = data.get("price", 0.0)
+    limit = data.get("subscriber_limit", 0)
+    budget = data.get("budget", 0.0)
+
+    limit_str = "∞" if limit == 0 else str(limit)
+    budget_str = "∞" if budget == 0 else f"{budget:.0f} ₽"
+
+    if is_private:
+        channel_line = "🔒 Приватный канал по ссылке"
+    else:
+        channel_line = f"🆔 @{username}\n🔗 {link}"
+
+    text = (
+        f"✅ <b>ГОТОВО К СОЗДАНИЮ</b>\n\n"
+        f"📢 Название: <b>{title}</b>\n"
+        f"{channel_line}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Цена за подписчика: <b>{price:.2f} ₽</b>\n"
+        f"👥 Лимит подписчиков: <b>{limit_str}</b>\n"
+        f"💵 Бюджет: <b>{budget_str}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"Создать кампанию?"
+    )
+    await message.answer(text, reply_markup=_confirm_kb())
+
+
+# ============================================================
+# ШАГ 5: СОЗДАНИЕ
 # ============================================================
 @router.callback_query(F.data == "subs_wiz_confirm")
 async def cb_confirm(callback: CallbackQuery, state: FSMContext):
@@ -221,6 +384,9 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
     link = data.get("link", "")
     title = data.get("title") or username or "Без названия"
     is_private = data.get("is_private", False)
+    price = float(data.get("price", 0.0))
+    limit = int(data.get("subscriber_limit", 0))
+    budget = float(data.get("budget", 0.0))
 
     await state.clear()
 
@@ -238,9 +404,9 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
             channel_id=channel_id,
             channel_username=username,
             channel_link=link,
-            price_per_subscription=2.0,
-            subscriber_limit=1000,
-            budget=2000,
+            price_per_subscription=price,
+            subscriber_limit=limit,
+            budget=budget,
             started_at=datetime.now(timezone.utc) if channel_id else None,
         )
         session.add(c)
@@ -249,12 +415,18 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer("✅ Создано")
 
+    limit_str = "∞" if limit == 0 else str(limit)
+    budget_str = "∞" if budget == 0 else f"{budget:.0f} ₽"
+
     if channel_id:
         text = (
             f"✅ <b>Кампания #{c.id} создана и активирована</b>\n\n"
             f"📢 {title}\n"
             f"🆔 @{username}\n"
             f"🔗 {link}\n\n"
+            f"💰 Цена: <b>{price:.2f} ₽</b>\n"
+            f"👥 Лимит: <b>{limit_str}</b>\n"
+            f"💵 Бюджет: <b>{budget_str}</b>\n\n"
             f"Теперь при включённом флаге обязательных подписок "
             f"юзеры будут видеть оффер."
         )
@@ -274,7 +446,7 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
 
 
 # ============================================================
-# Отмена / редактирование
+# ОТМЕНА / РЕДАКТИРОВАНИЕ
 # ============================================================
 @router.callback_query(F.data == "subs_wiz_cancel")
 async def cb_cancel(callback: CallbackQuery, state: FSMContext):
@@ -296,6 +468,10 @@ async def cb_edit_title(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
+    # Позволяем отредактировать название или цену — пока только название
     await state.set_state(SubsWizard.waiting_title_manual)
     await callback.answer()
-    await callback.message.answer("✏️ Введи новое название канала:")
+    await callback.message.answer(
+        "✏️ Введи новое название канала:",
+        reply_markup=_cancel_kb(),
+    )

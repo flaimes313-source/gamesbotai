@@ -15,6 +15,8 @@ from bot.keyboards.admin import (
     promos_menu_kb,
     subs_back_kb,
     subs_campaign_card_kb,
+    subs_edit_cancel_kb,
+    subs_edit_kb,
     subs_menu_kb,
     subs_subscribers_kb,
 )
@@ -51,7 +53,6 @@ router = Router()
 logger = get_logger(__name__)
 
 ADMIN_STATE: dict[int, dict] = {}
-
 SUBS_PAGE_SIZE = 50
 
 
@@ -374,7 +375,6 @@ async def cb_subs_list(callback: CallbackQuery):
         await callback.message.answer("Кампаний нет.")
         return
 
-    # Каждая кампания — отдельная inline-кнопка
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     kb_rows = []
     lines = ["📋 <b>Кампании подписок</b>\n"]
@@ -402,7 +402,6 @@ async def cb_subs_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "subs_summary")
 async def cb_subs_summary(callback: CallbackQuery):
-    """Сводка по всем активным кампаниям."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
@@ -444,9 +443,11 @@ async def cb_subs_summary(callback: CallbackQuery):
     )
 
 
+# ============================================================
+# КАРТОЧКА КАМПАНИИ
+# ============================================================
 @router.callback_query(F.data.startswith("subs_card_"))
 async def cb_subs_card(callback: CallbackQuery):
-    """Карточка кампании."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
@@ -471,14 +472,267 @@ async def cb_subs_card(callback: CallbackQuery):
         await callback.message.answer(text, reply_markup=kb)
 
 
-@router.callback_query(F.data.startswith("subs_subs_"))
-async def cb_subs_subscribers(callback: CallbackQuery):
-    """Список подписчиков."""
+# ============================================================
+# ВОЗОБНОВЛЕНИЕ КАМПАНИИ
+# ============================================================
+@router.callback_query(F.data.startswith("subs_resume_"))
+async def cb_subs_resume(callback: CallbackQuery):
+    await _safe_answer(callback, "Запускаю…")
+    if not _is_admin(callback.from_user.id):
+        return
+
+    try:
+        campaign_id = int(callback.data.replace("subs_resume_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    async with async_session() as session:
+        c = (await session.execute(
+            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
+        )).scalar_one_or_none()
+
+        if c is None:
+            await callback.message.answer("Кампания не найдена.")
+            return
+
+        c.is_active = True
+        c.status = "active"
+        c.ended_at = None
+        # started_at НЕ трогаем — сохраняем историю первого запуска
+        await session.commit()
+
+    stats = await get_campaign_stats(campaign_id)
+    if stats:
+        text = format_campaign_card(stats)
+        kb = subs_campaign_card_kb(campaign_id, stats["campaign"]["is_active"])
+        try:
+            await callback.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, reply_markup=kb)
+
+
+# ============================================================
+# ПОДМЕНЮ РЕДАКТИРОВАНИЯ
+# ============================================================
+@router.callback_query(F.data.startswith("subs_edit_") & ~F.data.startswith("subs_edit_price_") & ~F.data.startswith("subs_edit_limit_") & ~F.data.startswith("subs_edit_budget_"))
+async def cb_subs_edit_menu(callback: CallbackQuery):
+    """Открывает подменю редактирования."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
 
-    # Парсим: subs_subs_5 или subs_subs_5_p2
+    try:
+        campaign_id = int(callback.data.replace("subs_edit_", ""))
+    except ValueError:
+        await callback.message.answer("Некорректный ID.")
+        return
+
+    async with async_session() as session:
+        c = (await session.execute(
+            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
+        )).scalar_one_or_none()
+
+    if c is None:
+        await callback.message.answer("Кампания не найдена.")
+        return
+
+    text = (
+        f"✏️ <b>РЕДАКТИРОВАНИЕ КАМПАНИИ #{c.id}</b>\n\n"
+        f"📢 {c.name}\n\n"
+        f"💰 Цена за подписчика: <b>{float(c.price_per_subscription or 0):.0f} ₽</b>\n"
+        f"👥 Лимит подписчиков: <b>{c.subscriber_limit or '∞'}</b>\n"
+        f"💵 Бюджет: <b>{float(c.budget or 0):.0f} ₽</b>\n\n"
+        f"Что изменить?"
+    )
+
+    try:
+        await callback.message.edit_text(text, reply_markup=subs_edit_kb(campaign_id))
+    except Exception:
+        await callback.message.answer(text, reply_markup=subs_edit_kb(campaign_id))
+
+
+# ============================================================
+# FSM: НАЧАЛО РЕДАКТИРОВАНИЯ
+# ============================================================
+async def _start_edit(
+    callback: CallbackQuery,
+    field: str,
+    prompt: str,
+    campaign_id: int,
+) -> None:
+    """Общая логика старта FSM-ввода."""
+    ADMIN_STATE[callback.from_user.id] = {
+        "action": f"subs_edit_{field}",
+        "campaign_id": campaign_id,
+    }
+    await _safe_answer(callback)
+    await callback.message.answer(
+        prompt,
+        reply_markup=subs_edit_cancel_kb(campaign_id),
+    )
+
+
+@router.callback_query(F.data.startswith("subs_edit_price_"))
+async def cb_subs_edit_price(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        return
+    try:
+        campaign_id = int(callback.data.replace("subs_edit_price_", ""))
+    except ValueError:
+        await callback.answer("Некорректный ID.")
+        return
+
+    await _start_edit(
+        callback,
+        field="price",
+        prompt=(
+            "💰 <b>Изменение цены</b>\n\n"
+            "Отправь новую цену за подписчика в рублях (можно с копейками).\n\n"
+            "Пример: <code>15</code> или <code>12.5</code>"
+        ),
+        campaign_id=campaign_id,
+    )
+
+
+@router.callback_query(F.data.startswith("subs_edit_limit_"))
+async def cb_subs_edit_limit(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        return
+    try:
+        campaign_id = int(callback.data.replace("subs_edit_limit_", ""))
+    except ValueError:
+        await callback.answer("Некорректный ID.")
+        return
+
+    await _start_edit(
+        callback,
+        field="limit",
+        prompt=(
+            "👥 <b>Изменение лимита подписчиков</b>\n\n"
+            "Отправь новое максимальное число подписчиков.\n\n"
+            "Пример: <code>500</code>\n"
+            "Чтобы убрать лимит — отправь <code>0</code>"
+        ),
+        campaign_id=campaign_id,
+    )
+
+
+@router.callback_query(F.data.startswith("subs_edit_budget_"))
+async def cb_subs_edit_budget(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        return
+    try:
+        campaign_id = int(callback.data.replace("subs_edit_budget_", ""))
+    except ValueError:
+        await callback.answer("Некорректный ID.")
+        return
+
+    await _start_edit(
+        callback,
+        field="budget",
+        prompt=(
+            "💵 <b>Изменение бюджета</b>\n\n"
+            "Отправь новый бюджет кампании в рублях.\n\n"
+            "Пример: <code>5000</code>\n"
+            "Чтобы убрать лимит бюджета — отправь <code>0</code>"
+        ),
+        campaign_id=campaign_id,
+    )
+
+
+# ============================================================
+# FSM: ПРИЁМ ЗНАЧЕНИЯ
+# ============================================================
+@router.message(
+    F.text,
+    lambda m: ADMIN_STATE.get(m.from_user.id, {}).get("action", "").startswith("subs_edit_")
+)
+async def subs_edit_input(message: Message):
+    """
+    Принимает число для цены / лимита / бюджета.
+    ВАЖНО: этот хендлер должен идти ДО admin_input!
+    """
+    if not _is_admin(message.from_user.id):
+        return
+
+    state = ADMIN_STATE.get(message.from_user.id)
+    if not state:
+        return
+
+    action = state.get("action", "")
+    campaign_id = state.get("campaign_id")
+    if not action or not campaign_id:
+        ADMIN_STATE.pop(message.from_user.id, None)
+        return
+
+    text = (message.text or "").strip().replace(",", ".")
+    try:
+        value = float(text)
+    except ValueError:
+        await message.answer(
+            "❌ Не похоже на число. Попробуй ещё раз или нажми «Отмена»."
+        )
+        return
+
+    if value < 0:
+        await message.answer("❌ Значение не может быть отрицательным.")
+        return
+
+    field = action.replace("subs_edit_", "")  # price / limit / budget
+
+    async with async_session() as session:
+        c = (await session.execute(
+            select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
+        )).scalar_one_or_none()
+
+        if c is None:
+            ADMIN_STATE.pop(message.from_user.id, None)
+            await message.answer("Кампания не найдена.")
+            return
+
+        if field == "price":
+            c.price_per_subscription = value
+            field_label = f"цена = <b>{value:.0f} ₽</b>"
+        elif field == "limit":
+            c.subscriber_limit = int(value)
+            field_label = f"лимит = <b>{int(value) if value > 0 else '∞'}</b>"
+        elif field == "budget":
+            c.budget = value
+            field_label = f"бюджет = <b>{value:.0f} ₽</b>"
+        else:
+            ADMIN_STATE.pop(message.from_user.id, None)
+            await message.answer("Неизвестное поле.")
+            return
+
+        await session.commit()
+
+    ADMIN_STATE.pop(message.from_user.id, None)
+
+    # Показываем обновлённую карточку
+    stats = await get_campaign_stats(campaign_id)
+    if stats:
+        text_out = (
+            f"✅ <b>Сохранено</b>\n\n"
+            f"Кампания #{campaign_id}: {field_label}\n\n"
+            + format_campaign_card(stats)
+        )
+        kb = subs_campaign_card_kb(campaign_id, stats["campaign"]["is_active"])
+        try:
+            await message.answer(text_out, reply_markup=kb)
+        except Exception:
+            await message.answer(text_out)
+
+
+# ============================================================
+# ПОДПИСЧИКИ
+# ============================================================
+@router.callback_query(F.data.startswith("subs_subs_"))
+async def cb_subs_subscribers(callback: CallbackQuery):
+    await _safe_answer(callback)
+    if not _is_admin(callback.from_user.id):
+        return
+
     data = callback.data.replace("subs_subs_", "")
     page = 1
     if "_p" in data:
@@ -529,7 +783,6 @@ async def cb_subs_subscribers(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("subs_daily_"))
 async def cb_subs_daily(callback: CallbackQuery):
-    """Разбивка по дням."""
     await _safe_answer(callback)
     if not _is_admin(callback.from_user.id):
         return
@@ -561,7 +814,6 @@ async def cb_subs_daily(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("subs_export_"))
 async def cb_subs_export(callback: CallbackQuery):
-    """Экспорт в CSV."""
     await _safe_answer(callback, "Готовлю CSV…")
     if not _is_admin(callback.from_user.id):
         return
@@ -582,7 +834,6 @@ async def cb_subs_export(callback: CallbackQuery):
         await callback.message.answer("Не удалось подготовить файл.")
         return
 
-    # Имя файла: campaign_5_2026-09-25.csv
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     filename = f"campaign_{campaign_id}_{today}.csv"
 
@@ -603,7 +854,6 @@ async def cb_subs_export(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("subs_stop_"))
 async def cb_subs_stop(callback: CallbackQuery):
-    """Остановить кампанию."""
     await _safe_answer(callback, "Останавливаю…")
     if not _is_admin(callback.from_user.id):
         return
@@ -628,7 +878,6 @@ async def cb_subs_stop(callback: CallbackQuery):
         c.ended_at = datetime.now(timezone.utc)
         await session.commit()
 
-    # Обновляем карточку
     stats = await get_campaign_stats(campaign_id)
     if stats:
         text = format_campaign_card(stats)
@@ -918,7 +1167,8 @@ async def cmd_fake_refs(message: Message):
 
 
 # ============================================================
-# ВВОД ТЕКСТА ОТ АДМИНА
+# ВВОД ТЕКСТА ОТ АДМИНА (ADS / PROMOS)
+# ВАЖНО: идёт ПОСЛЕ subs_edit_input!
 # ============================================================
 @router.message(F.text, lambda m: m.from_user.id in ADMIN_STATE)
 async def admin_input(message: Message):

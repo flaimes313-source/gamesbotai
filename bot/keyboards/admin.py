@@ -71,7 +71,10 @@ def subs_menu_kb() -> InlineKeyboardMarkup:
 def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMarkup:
     """
     Клавиатура карточки кампании.
-    Кнопка «Остановить» — только если кампания активна.
+
+    Кнопка статуса зависит от is_active:
+    - активна → ⏸ Остановить
+    - остановлена → ▶️ Запустить
     """
     rows = [
         [InlineKeyboardButton(
@@ -87,15 +90,27 @@ def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMa
             callback_data=f"subs_export_{campaign_id}",
         )],
         [InlineKeyboardButton(
+            text="✏️ Изменить",
+            callback_data=f"subs_edit_{campaign_id}",
+        )],
+        [InlineKeyboardButton(
             text="🔄 Обновить",
             callback_data=f"subs_card_{campaign_id}",
         )],
     ]
+
+    # Кнопка статуса
     if is_active:
         rows.append([InlineKeyboardButton(
-            text="⏸ Остановить кампанию",
+            text="⏸ Остановить",
             callback_data=f"subs_stop_{campaign_id}",
         )])
+    else:
+        rows.append([InlineKeyboardButton(
+            text="▶️ Запустить",
+            callback_data=f"subs_resume_{campaign_id}",
+        )])
+
     rows.append([InlineKeyboardButton(
         text="⬅️ К списку",
         callback_data="subs_list",
@@ -103,10 +118,48 @@ def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMa
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def subs_edit_kb(campaign_id: int) -> InlineKeyboardMarkup:
+    """
+    Подменю редактирования кампании.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="💰 Изменить цену",
+                callback_data=f"subs_edit_price_{campaign_id}",
+            )],
+            [InlineKeyboardButton(
+                text="👥 Изменить лимит",
+                callback_data=f"subs_edit_limit_{campaign_id}",
+            )],
+            [InlineKeyboardButton(
+                text="💵 Изменить бюджет",
+                callback_data=f"subs_edit_budget_{campaign_id}",
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ К карточке",
+                callback_data=f"subs_card_{campaign_id}",
+            )],
+        ]
+    )
+
+
+def subs_edit_cancel_kb(campaign_id: int) -> InlineKeyboardMarkup:
+    """
+    Отмена FSM-ввода. Возврат к подменю редактирования.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=f"subs_edit_{campaign_id}",
+            )],
+        ]
+    )
+
+
 def subs_subscribers_kb(campaign_id: int, page: int, has_next: bool = False) -> InlineKeyboardMarkup:
-    """
-    Клавиатура списка подписчиков.
-    """
+    """Клавиатура списка подписчиков."""
     rows = []
 
     nav = []
