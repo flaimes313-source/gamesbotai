@@ -1,5 +1,14 @@
 """
 Квесты — цепочки заданий.
+
+Логика:
+- При первом действии юзера (любого) автостартует первый квест
+  по sort_order, у которого ещё нет записи в UserQuestProgress.
+- После завершения квеста — при следующем действии автостартует
+  следующий незапущенный квест.
+- advance_quest продвигает ОДИН активный квест за вызов
+  (первый по sort_order, у которого текущий шаг совпадает
+  с task_type действия).
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -14,7 +23,9 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Реестр квестов (создаётся при seed)
+# ============================================================
+# РЕЕСТР КВЕСТОВ
+# ============================================================
 QUESTS_SEED = [
     {
         "code": "explorer",
@@ -45,6 +56,9 @@ QUESTS_SEED = [
 ]
 
 
+# ============================================================
+# SEED
+# ============================================================
 async def seed_quests() -> None:
     """Создаёт квесты и шаги, если их нет."""
     async with async_session() as session:
@@ -81,6 +95,9 @@ async def seed_quests() -> None:
     logger.info("[QUESTS] Seeded")
 
 
+# ============================================================
+# ЧТЕНИЕ
+# ============================================================
 async def get_active_quests(user_id: int) -> list:
     """Все активные квесты + прогресс юзера."""
     async with async_session() as session:
@@ -125,8 +142,11 @@ async def get_quest_step(quest_id: int, step_number: int) -> Optional[QuestStep]
         )).scalar_one_or_none()
 
 
+# ============================================================
+# СТАРТ КВЕСТА (явный)
+# ============================================================
 async def start_quest(user_id: int, quest_id: int) -> bool:
-    """Начать квест."""
+    """Начать квест вручную. Возвращает False, если уже начат."""
     async with async_session() as session:
         existing = (await session.execute(
             select(UserQuestProgress).where(
@@ -150,12 +170,21 @@ async def start_quest(user_id: int, quest_id: int) -> bool:
     return True
 
 
+# ============================================================
+# ПРОДВИЖЕНИЕ
+# ============================================================
 async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
     """
     Продвигает ОДИН активный квест юзера (первый по sort_order),
     у которого текущий шаг совпадает с task_type.
 
-    Логика:
+    Если у юзера нет ни одного активного квеста — автостартует
+    первый по sort_order, у которого ещё нет записи в UserQuestProgress.
+
+    Если все квесты завершены и запушены — возвращает matched=False
+    (все квесты пройдены).
+
+    Логика шага:
     - step_progress накапливается
     - пока step_progress < step.target_value — шаг не закрывается
     - при достижении target_value: начисляем reward_points,
@@ -164,11 +193,12 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
 
     Возвращает:
       {
-        "matched": bool,           # нашёлся ли квест с таким шагом
+        "matched": bool,
         "quest_id": Optional[int],
-        "step_completed": bool,    # закрылся ли текущий шаг
-        "quest_completed": bool,   # завершился ли весь квест
+        "step_completed": bool,
+        "quest_completed": bool,
         "points_awarded": int,
+        "auto_started": bool,     # ← флаг, что квест был автостартован
       }
     """
     result = {
@@ -177,10 +207,11 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
         "step_completed": False,
         "quest_completed": False,
         "points_awarded": 0,
+        "auto_started": False,
     }
 
     async with async_session() as session:
-        # Все активные прогрессы, отсортированные по приоритету квеста
+        # ---- 1. Все активные прогрессы, отсортированные по приоритету квеста ----
         rows = (await session.execute(
             select(UserQuestProgress, Quest)
             .join(Quest, Quest.id == UserQuestProgress.quest_id)
@@ -192,9 +223,43 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
             .order_by(Quest.sort_order)
         )).all()
 
+        # ---- 2. АВТОСТАРТ: если активных нет — стартуем следующий ----
         if not rows:
-            return result
+            # Все quest_id, которые юзер уже начинал
+            started_ids_subq = (
+                select(UserQuestProgress.quest_id)
+                .where(UserQuestProgress.user_id == user_id)
+            )
 
+            next_quest = (await session.execute(
+                select(Quest)
+                .where(Quest.is_active.is_(True))
+                .where(Quest.id.notin_(started_ids_subq))
+                .order_by(Quest.sort_order)
+                .limit(1)
+            )).scalar_one_or_none()
+
+            if next_quest is None:
+                # Все квесты юзер уже запускал — ничего не делаем
+                return result
+
+            prog = UserQuestProgress(
+                user_id=user_id,
+                quest_id=next_quest.id,
+                current_step=1,
+                step_progress=0,
+                status="in_progress",
+            )
+            session.add(prog)
+            await session.flush()
+
+            rows = [(prog, next_quest)]
+            result["auto_started"] = True
+            logger.info(
+                f"[QUESTS] user={user_id} auto-started quest='{next_quest.code}'"
+            )
+
+        # ---- 3. ПРОДВИЖЕНИЕ ----
         for prog, quest in rows:
             step = (await session.execute(
                 select(QuestStep).where(
@@ -223,7 +288,7 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
                 result["step_completed"] = True
                 result["points_awarded"] = step.reward_points
 
-                # Всего шагов в квесте
+                # Сколько всего шагов в квесте
                 total_steps = (await session.execute(
                     select(QuestStep).where(QuestStep.quest_id == prog.quest_id)
                 )).scalars().all()
@@ -231,10 +296,12 @@ async def advance_quest(user_id: int, task_type: str, amount: int = 1) -> dict:
                 next_step_number = prog.current_step + 1
 
                 if next_step_number > len(total_steps):
+                    # Квест завершён
                     prog.status = "completed"
                     prog.completed_at = datetime.now(timezone.utc)
                     result["quest_completed"] = True
                 else:
+                    # Переход к следующему шагу
                     prog.current_step = next_step_number
                     prog.step_progress = 0
 
