@@ -6,9 +6,6 @@
 - 📋 Список подписчиков.
 - 📊 Разбивка по дням.
 - 📤 Экспорт в CSV.
-
-Всё считается на лету из SubscriptionEvent + User.
-Никаких миграций, никаких новых таблиц.
 """
 
 from __future__ import annotations
@@ -33,39 +30,7 @@ logger = get_logger(__name__)
 async def get_campaign_stats(campaign_id: int) -> Optional[Dict[str, Any]]:
     """
     Собирает полную статистику кампании.
-
-    Возвращает:
-        {
-            "campaign": {
-                "id", "name", "status", "is_active",
-                "channel_id", "channel_username", "channel_link",
-                "price_per_subscription", "subscriber_limit", "budget",
-                "started_at", "ended_at",
-            },
-            "counts": {
-                "total": int,       # все, кто попал в SubscriptionEvent
-                "confirmed": int,   # подписался
-                "pending": int,     # ожидает
-            },
-            "money": {
-                "total_cost": float,     # confirmed * price
-                "budget": float,         # из кампании
-                "budget_left": float,    # budget - total_cost
-                "budget_used_pct": float,
-            },
-            "limits": {
-                "subscriber_limit": int,
-                "subscriber_left": int,
-                "subscriber_used_pct": float,
-            },
-            "period": {
-                "started_at": datetime | None,
-                "ended_at": datetime | None,
-                "is_active": bool,
-            },
-        }
-
-    None — если кампания не найдена.
+    Возвращает None, если кампания не найдена ИЛИ удалена (deleted=True).
     """
     async with async_session() as session:
         campaign = (await session.execute(
@@ -75,7 +40,10 @@ async def get_campaign_stats(campaign_id: int) -> Optional[Dict[str, Any]]:
         if campaign is None:
             return None
 
-        # Все события по кампании
+        # Soft-deleted кампанию не открываем через карточку
+        if getattr(campaign, "deleted", False):
+            return None
+
         total = (await session.execute(
             select(func.count(SubscriptionEvent.id))
             .where(SubscriptionEvent.campaign_id == campaign_id)
@@ -89,7 +57,6 @@ async def get_campaign_stats(campaign_id: int) -> Optional[Dict[str, Any]]:
 
         pending = total - confirmed
 
-        # Снимок данных кампании (до выхода из сессии)
         camp = {
             "id": campaign.id,
             "name": campaign.name,
@@ -105,14 +72,12 @@ async def get_campaign_stats(campaign_id: int) -> Optional[Dict[str, Any]]:
             "ended_at": campaign.ended_at,
         }
 
-    # Считаем деньги
     price = camp["price_per_subscription"]
     total_cost = price * confirmed
     budget = camp["budget"]
     budget_left = max(0.0, budget - total_cost)
     budget_used_pct = (total_cost / budget * 100) if budget > 0 else 0.0
 
-    # Считаем лимиты
     sub_limit = camp["subscriber_limit"]
     sub_left = max(0, sub_limit - confirmed) if sub_limit > 0 else 0
     sub_used_pct = (confirmed / sub_limit * 100) if sub_limit > 0 else 0.0
@@ -152,13 +117,6 @@ async def get_campaign_subscribers(
     offset: int = 0,
     only_confirmed: bool = True,
 ) -> List[Dict[str, Any]]:
-    """
-    Возвращает список подписчиков кампании.
-    Сортировка — по дате (свежие вверху).
-
-    only_confirmed=True — только status="confirmed".
-    only_confirmed=False — все (pending + confirmed).
-    """
     async with async_session() as session:
         q = (
             select(SubscriptionEvent, User)
@@ -191,11 +149,6 @@ async def get_campaign_subscribers(
 # РАЗБИВКА ПО ДНЯМ
 # ============================================================
 async def get_campaign_daily_breakdown(campaign_id: int) -> List[Dict[str, Any]]:
-    """
-    Возвращает разбивку подтверждённых подписчиков по дням.
-
-    [{"date": date, "count": int, "cost": float}, ...]
-    """
     async with async_session() as session:
         rows = (await session.execute(
             select(
@@ -227,7 +180,7 @@ async def get_campaign_daily_breakdown(campaign_id: int) -> List[Dict[str, Any]]
 
 
 # ============================================================
-# ФОРМАТИРОВАНИЕ ДЛЯ UI
+# ФОРМАТИРОВАНИЕ
 # ============================================================
 def _fmt_dt(dt: Optional[datetime]) -> str:
     if dt is None:
@@ -246,26 +199,22 @@ def _fmt_dt_full(dt: Optional[datetime]) -> str:
 
 
 def format_campaign_card(stats: Dict[str, Any]) -> str:
-    """Карточка кампании для админки."""
     c = stats["campaign"]
     counts = stats["counts"]
     money = stats["money"]
     limits = stats["limits"]
 
-    # Статус
     if c["is_active"]:
         status_line = "🟢 <b>Активна</b>"
     else:
         status_line = "🔴 <b>Остановлена</b>"
 
-    # Период
     period_line = f"📅 {_fmt_dt(c['started_at'])}"
     if c["ended_at"]:
         period_line += f" — {_fmt_dt(c['ended_at'])}"
     else:
         period_line += " — сейчас"
 
-    # Стоимость
     if money["budget"] > 0:
         money_line = (
             f"💰 Стоимость: <b>{money['total_cost']:.0f} ₽</b>\n"
@@ -275,7 +224,6 @@ def format_campaign_card(stats: Dict[str, Any]) -> str:
     else:
         money_line = f"💰 Стоимость: <b>{money['total_cost']:.0f} ₽</b>"
 
-    # Лимит
     if limits["subscriber_limit"] > 0:
         limit_line = (
             f"👥 Лимит подписчиков: {counts['confirmed']}/"
@@ -306,7 +254,6 @@ def format_subscribers_list(
     per_page: int = 50,
     only_confirmed: bool = True,
 ) -> str:
-    """Список подписчиков."""
     title = "📋 <b>ПОДПИСЧИКИ</b>" if only_confirmed else "📋 <b>ВСЕ СОБЫТИЯ</b>"
     lines = [f"{title} (всего {total})", ""]
 
@@ -330,8 +277,7 @@ def format_daily_breakdown(
     campaign_name: str,
     price: float,
 ) -> str:
-    """Разбивка по дням."""
-    lines = [f"📊 <b>РАЗБИВКА ПО ДНЯМ</b>", f"Кампания: {campaign_name}", ""]
+    lines = ["📊 <b>РАЗБИВКА ПО ДНЯМ</b>", f"Кампания: {campaign_name}", ""]
 
     if not breakdown:
         lines.append("<i>Пока нет подтверждённых подписок.</i>")
@@ -348,7 +294,7 @@ def format_daily_breakdown(
         total_cost += row["cost"]
 
     lines.append("")
-    lines.append(f"━━━━━━━━━━━━━━━━━━")
+    lines.append("━━━━━━━━━━━━━━━━━━")
     lines.append(f"<b>Итого: {total_count} подписчиков, {total_cost:.0f} ₽</b>")
     return "\n".join(lines)
 
@@ -360,12 +306,6 @@ async def export_to_csv(
     campaign_id: int,
     only_confirmed: bool = True,
 ) -> Optional[bytes]:
-    """
-    Возвращает CSV-байты для отправки файлом.
-
-    Колонки: user_id, telegram_id, username, first_name,
-             status, checked_at, confirmed_at
-    """
     async with async_session() as session:
         campaign = (await session.execute(
             select(SubscriptionCampaign).where(SubscriptionCampaign.id == campaign_id)
@@ -385,7 +325,6 @@ async def export_to_csv(
 
         rows = (await session.execute(q)).all()
 
-    # CSV
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -403,4 +342,4 @@ async def export_to_csv(
             ev.confirmed_at.isoformat() if ev.confirmed_at else "",
         ])
 
-    return buf.getvalue().encode("utf-8-sig")  # BOM для Excel
+    return buf.getvalue().encode("utf-8-sig")

@@ -43,22 +43,18 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_user_id ON user_weekly_challenges (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_weekly_challenges_challenge_id ON user_weekly_challenges (challenge_id);",
 
-    # Quests — миграция колонки step_progress
+    # Quests
     "ALTER TABLE user_quest_progress ADD COLUMN IF NOT EXISTS step_progress INTEGER NOT NULL DEFAULT 0;",
-
-    # Quests — индексы
     "CREATE INDEX IF NOT EXISTS ix_quest_steps_quest_id ON quest_steps (quest_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_user_id ON user_quest_progress (user_id);",
     "CREATE INDEX IF NOT EXISTS ix_user_quest_progress_quest_id ON user_quest_progress (quest_id);",
 
-    # Legendary archetypes (Шаг 1.2)
+    # Legendary archetypes
     "ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS last_legendary_at TIMESTAMPTZ;",
 
     # ============================================================
     # Этап 1 — Уведомления (инфраструктура)
     # ============================================================
-
-    # Настройки уведомлений
     """
     CREATE TABLE IF NOT EXISTS user_notification_settings (
         id SERIAL PRIMARY KEY,
@@ -76,7 +72,6 @@ MIGRATIONS = [
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_notification_settings_user_id ON user_notification_settings (user_id);",
 
-    # Просмотры профиля
     """
     CREATE TABLE IF NOT EXISTS profile_views (
         id SERIAL PRIMARY KEY,
@@ -90,7 +85,6 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_profile_views_viewed_id ON profile_views (viewed_id);",
     "CREATE INDEX IF NOT EXISTS ix_profile_views_created_at ON profile_views (created_at);",
 
-    # Гороскопы
     """
     CREATE TABLE IF NOT EXISTS horoscopes (
         id SERIAL PRIMARY KEY,
@@ -107,9 +101,14 @@ MIGRATIONS = [
     # ============================================================
     # Этап 4 — Рефакторинг loops на hub
     # ============================================================
-
-    # Добавляем поле chat_reminder_enabled в существующую таблицу
     "ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS chat_reminder_enabled BOOLEAN NOT NULL DEFAULT TRUE;",
+
+    # ============================================================
+    # Этап 5.1 — Soft delete кампаний
+    # ============================================================
+    "ALTER TABLE subscription_campaigns ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;",
+    "ALTER TABLE subscription_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;",
+    "CREATE INDEX IF NOT EXISTS ix_subscription_campaigns_deleted ON subscription_campaigns (deleted);",
 ]
 
 

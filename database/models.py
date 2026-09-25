@@ -324,6 +324,10 @@ class SubscriptionCampaign(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Soft delete: кампания скрыта из UI, но данные остаются в БД.
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
 class SubscriptionEvent(Base):
     __tablename__ = "subscription_events"
@@ -662,10 +666,6 @@ class UserQuestProgress(Base):
 # NOTIFICATION SETTINGS
 # ============================================================
 class UserNotificationSettings(Base):
-    """
-    Тумблеры категорий уведомлений.
-    Создаётся лениво — при первой попытке прочитать настройки юзера.
-    """
     __tablename__ = "user_notification_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -692,10 +692,6 @@ class UserNotificationSettings(Base):
 # PROFILE VIEWS
 # ============================================================
 class ProfileView(Base):
-    """
-    Лог того, кто смотрел чей профиль.
-    Источники: matching / compare / tops / search.
-    """
     __tablename__ = "profile_views"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -715,9 +711,6 @@ class ProfileView(Base):
 # HOROSCOPES
 # ============================================================
 class Horoscope(Base):
-    """
-    Кэш гороскопов. Один гороскоп на (user_id, date).
-    """
     __tablename__ = "horoscopes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

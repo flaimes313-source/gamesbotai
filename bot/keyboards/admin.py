@@ -61,6 +61,7 @@ def subs_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Список кампаний", callback_data="subs_list")],
             [InlineKeyboardButton(text="📊 Сводка по всем", callback_data="subs_summary")],
+            [InlineKeyboardButton(text="📦 Показать удалённые", callback_data="subs_deleted_list")],
             [InlineKeyboardButton(text="➕ Новая кампания", callback_data="subs_new")],
             [InlineKeyboardButton(text="🚨 Стоп всё", callback_data="subs_stop_all")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_back")],
@@ -68,14 +69,25 @@ def subs_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
-def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMarkup:
+def subs_campaign_card_kb(campaign_id: int, is_active: bool, deleted: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура карточки кампании.
-
-    Кнопка статуса зависит от is_active:
-    - активна → ⏸ Остановить
-    - остановлена → ▶️ Запустить
+    Если deleted=True — показываем только «Восстановить».
     """
+    if deleted:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="♻️ Восстановить",
+                    callback_data=f"subs_restore_{campaign_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="⬅️ К списку",
+                    callback_data="subs_deleted_list",
+                )],
+            ]
+        )
+
     rows = [
         [InlineKeyboardButton(
             text="📋 Подписчики",
@@ -99,7 +111,6 @@ def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMa
         )],
     ]
 
-    # Кнопка статуса
     if is_active:
         rows.append([InlineKeyboardButton(
             text="⏸ Остановить",
@@ -112,16 +123,43 @@ def subs_campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMa
         )])
 
     rows.append([InlineKeyboardButton(
+        text="🗑 Удалить",
+        callback_data=f"subs_delete_{campaign_id}",
+    )])
+    rows.append([InlineKeyboardButton(
         text="⬅️ К списку",
         callback_data="subs_list",
     )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def subs_delete_confirm_kb(campaign_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🗑 Да, удалить",
+                callback_data=f"subs_delete_confirm_{campaign_id}",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=f"subs_card_{campaign_id}",
+            )],
+        ]
+    )
+
+
+def subs_deleted_list_kb(campaigns: list) -> InlineKeyboardMarkup:
+    rows = []
+    for c in campaigns:
+        rows.append([InlineKeyboardButton(
+            text=f"♻️ #{c.id} {c.name[:40]}",
+            callback_data=f"subs_card_{c.id}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm_subs")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def subs_edit_kb(campaign_id: int) -> InlineKeyboardMarkup:
-    """
-    Подменю редактирования кампании.
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -145,9 +183,6 @@ def subs_edit_kb(campaign_id: int) -> InlineKeyboardMarkup:
 
 
 def subs_edit_cancel_kb(campaign_id: int) -> InlineKeyboardMarkup:
-    """
-    Отмена FSM-ввода. Возврат к подменю редактирования.
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -159,7 +194,6 @@ def subs_edit_cancel_kb(campaign_id: int) -> InlineKeyboardMarkup:
 
 
 def subs_subscribers_kb(campaign_id: int, page: int, has_next: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура списка подписчиков."""
     rows = []
 
     nav = []
@@ -189,7 +223,6 @@ def subs_subscribers_kb(campaign_id: int, page: int, has_next: bool = False) -> 
 
 
 def subs_back_kb() -> InlineKeyboardMarkup:
-    """Возврат к списку кампаний."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ К списку", callback_data="subs_list")],
