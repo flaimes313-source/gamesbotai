@@ -267,11 +267,26 @@ async def schedule_notification(
 ) -> bool:
     """
     Ставит уведомление в очередь.
+
+    ВАЖНО: если такой же kind уже в очереди у этого user_id — НЕ добавляем
+    второй раз. Это защита от множественных вызовов loop-а, пока hub
+    ещё не успел отправить первое.
+
     Возвращает True, если принято.
     """
     if not user_id:
         return False
 
+    # ---- 1. Проверка «уже в очереди» ----
+    async with _queue_lock:
+        existing = _queue.get(user_id, [])
+        if any(item.get("kind") == kind for item in existing):
+            logger.info(
+                f"[HUB] skip (already in queue) user={user_id} kind={kind}"
+            )
+            return False
+
+    # ---- 2. can_send_now (флаги, настройки, тихие часы, лимит, дубли) ----
     if tz_name:
         allowed, reason = await can_send_now(
             user_id, kind, priority, tz_name
@@ -282,7 +297,16 @@ async def schedule_notification(
             )
             return False
 
+    # ---- 3. Кладём в очередь (с повторной проверкой после await) ----
     async with _queue_lock:
+        existing = _queue.get(user_id, [])
+        if any(item.get("kind") == kind for item in existing):
+            # Гонка: кто-то успел добавить, пока мы ждали can_send_now
+            logger.info(
+                f"[HUB] skip (race, already in queue) user={user_id} kind={kind}"
+            )
+            return False
+
         _queue.setdefault(user_id, []).append({
             "kind": kind,
             "priority": priority,
