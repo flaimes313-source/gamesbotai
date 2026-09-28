@@ -170,6 +170,11 @@ async def update_notification_setting(
 # ПРОВЕРКИ
 # ============================================================
 async def _already_sent_today(user_id: int, kind: str) -> bool:
+    """
+    Проверяет, отправляли ли уже это уведомление сегодня (по событиям).
+
+    ВАЖНО: фильтруем по Event.user_id (внутренний id).
+    """
     event_name = KIND_TO_EVENT.get(kind)
     if not event_name:
         return False
@@ -190,6 +195,10 @@ async def _already_sent_today(user_id: int, kind: str) -> bool:
     except Exception:
         logger.exception("[HUB] already_sent_today failed")
         return False
+
+
+# Публичный алиас для импорта из других модулей (например, daily_sender)
+already_sent_today = _already_sent_today
 
 
 async def _count_sent_today(user_id: int) -> int:
@@ -301,7 +310,6 @@ async def schedule_notification(
     async with _queue_lock:
         existing = _queue.get(user_id, [])
         if any(item.get("kind") == kind for item in existing):
-            # Гонка: кто-то успел добавить, пока мы ждали can_send_now
             logger.info(
                 f"[HUB] skip (race, already in queue) user={user_id} kind={kind}"
             )

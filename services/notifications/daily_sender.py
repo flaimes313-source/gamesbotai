@@ -6,15 +6,9 @@
 - Генерим персональный прикол через AI.
 - Ставим в hub (kind="daily_result", priority=2).
 
-Hub сам проверит:
-- feature flag daily_content_enabled,
-- настройки юзера (daily_result_enabled),
-- тихие часы (23:00–08:00 TZ),
-- дневной лимит (2 проактивных),
-- дубли (daily_sent сегодня?).
-
-Приоритет 2 — высокий. Если дневной лимит набран,
-daily result всё равно пройдёт.
+Защита от дублей (двойная):
+1. В самом daily_loop: _already_sent_today перед постановкой.
+2. В hub: проверка «уже в очереди» + _already_sent_today.
 """
 
 import asyncio
@@ -27,7 +21,10 @@ from database.connection import async_session
 from database.models import Profile, User
 from services.ai.factory import get_ai_provider
 from services.feature_flags import is_enabled
-from services.notifications.hub import schedule_notification
+from services.notifications.hub import (
+    _already_sent_today,
+    schedule_notification,
+)
 from services.timezones import get_local_hour
 from utils.logging import get_logger
 
@@ -39,7 +36,7 @@ logger = get_logger(__name__)
 # ============================================================
 DAILY_TARGET_HOUR = 20
 CHECK_INTERVAL_SECONDS = 15 * 60
-DAILY_PRIORITY = 2  # высокий
+DAILY_PRIORITY = 2
 
 
 # ============================================================
@@ -97,6 +94,10 @@ async def _build_daily_payload(user_id: int) -> str | None:
 async def send_daily_for_current_hour(bot: Bot) -> None:
     """
     Проходит по юзерам с локальным 20:00, ставит в hub.
+
+    Двойная защита:
+    - в самом loop проверяем _already_sent_today;
+    - hub ещё раз проверит «уже в очереди» + _already_sent_today.
     """
     if not await is_enabled("daily_content_enabled", default=False):
         return
@@ -111,9 +112,22 @@ async def send_daily_for_current_hour(bot: Bot) -> None:
         )).scalars().all()
 
     scheduled = 0
+    skipped = 0
+
     for user in users:
         if get_local_hour(user.timezone) != DAILY_TARGET_HOUR:
             continue
+
+        # ✅ ЗАЩИТА №1: уже слали сегодня?
+        try:
+            if await _already_sent_today(user.id, "daily_result"):
+                logger.info(
+                    f"[DAILY] skip (already_sent_today) user={user.id}"
+                )
+                skipped += 1
+                continue
+        except Exception:
+            logger.exception("[DAILY] already_sent check failed")
 
         try:
             text = await _build_daily_payload(user.id)
@@ -132,8 +146,8 @@ async def send_daily_for_current_hour(bot: Bot) -> None:
         except Exception:
             logger.exception(f"[DAILY] failed user={user.telegram_id}")
 
-    if scheduled:
-        logger.info(f"[DAILY] scheduled={scheduled}")
+    if scheduled or skipped:
+        logger.info(f"[DAILY] scheduled={scheduled} skipped={skipped}")
 
 
 # ============================================================
