@@ -1,6 +1,8 @@
 import asyncio
 import os
+import random
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from aiohttp import web
 from sqlalchemy import select
@@ -17,13 +19,67 @@ PRO_DURATION_DAYS = 30
 
 
 # ============================================================
+# Глобальный bot (пробрасывается из main.py)
+# ============================================================
+_bot = None
+
+
+def set_bot(bot) -> None:
+    """Устанавливает глобальный bot для отправки уведомлений."""
+    global _bot
+    _bot = bot
+    logger.info("[WEBHOOK] bot attached")
+
+
+# ============================================================
+# Сообщения после активации PRO
+# ============================================================
+PRO_ACTIVATED_MESSAGES = [
+    (
+        "💎 <b>PRO АКТИВИРОВАН!</b>\n\n"
+        "Ты только что открыл себе максимум:\n"
+        "♾ 50 анализов в день\n"
+        "🚀 Расширенные режимы поиска\n"
+        "🤖 AI-помощник в чатах\n"
+        "🚫 Никакой рекламы\n\n"
+        "📸 <b>Прокачай харизму максимально</b> — "
+        "отправь новое фото и смотри, какой ты вайб!"
+    ),
+    (
+        "💎 <b>PRO на борту!</b>\n\n"
+        "Теперь ты играешь без ограничений:\n"
+        "♾ Анализы без лимита\n"
+        "🚀 Секретные режимы поиска\n"
+        "🤖 AI-помощник в чатах\n"
+        "🚫 Реклама больше не пристаёт\n\n"
+        "🔥 <b>Твой хаос станет легендарным.</b> "
+        "Отправь фото — сравним!"
+    ),
+    (
+        "💎 <b>PRO активен!</b>\n\n"
+        "Что теперь доступно:\n"
+        "♾ 50 анализов в день\n"
+        "🚀 Режимы для настоящих игроков\n"
+        "🤖 AI-помощник в чатах\n"
+        "🚫 Чисто, без рекламы\n\n"
+        "⚡ <b>Время прокачать вайб до максимума.</b> "
+        "Жду фото!"
+    ),
+]
+
+
+def _pick_activated_message() -> str:
+    return random.choice(PRO_ACTIVATED_MESSAGES)
+
+
+# ============================================================
 # Выдача PRO
 # ============================================================
 async def _grant_pro(user_id: int, payment_id: str) -> bool:
     """
     Выдаёт PRO на PRO_DURATION_DAYS.
     Если PRO уже активна — продлевает.
-    Возвращает True при успехе.
+    После — отправляет поздравительное сообщение.
     """
     async with async_session() as session:
         user = (await session.execute(
@@ -48,11 +104,29 @@ async def _grant_pro(user_id: int, payment_id: str) -> bool:
         f"(payment {payment_id})"
     )
 
-    await track(
-        "pro_purchase",
-        telegram_id=telegram_id,
-        payload={"type": "yookassa", "payment_id": payment_id},
-    )
+    try:
+        await track(
+            "pro_purchase",
+            telegram_id=telegram_id,
+            payload={"type": "yookassa", "payment_id": payment_id},
+        )
+    except Exception:
+        logger.exception("[YOOKASSA] track failed")
+
+    # Поздравительное сообщение
+    if _bot is not None:
+        try:
+            until_str = premium_until.strftime("%d.%m.%Y")
+            await _bot.send_message(
+                telegram_id,
+                _pick_activated_message()
+                + f"\n\n📅 PRO активна до: <b>{until_str}</b>",
+            )
+        except Exception:
+            logger.exception("[YOOKASSA] failed to send activation message")
+    else:
+        logger.warning("[YOOKASSA] bot not attached, message not sent")
+
     return True
 
 
@@ -63,7 +137,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
     """
     Принимает webhook от YooKassa.
     События: payment.succeeded, payment.canceled, refund.succeeded.
-    Защита от повторной обработки — по Payment.status в БД.
+    Защита от повторной обработки — по Payment.status.
     """
     try:
         data = await request.json()

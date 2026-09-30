@@ -41,7 +41,7 @@ try:
     from utils.logging import get_logger, setup_logging
 
     _log_boot("Importing webhook_server...")
-    from webhook_server import run_server
+    from webhook_server import run_server, set_bot
 
     _log_boot("Importing daily_sender...")
     from services.notifications.daily_sender import daily_loop
@@ -137,6 +137,22 @@ async def main() -> None:
     except Exception:
         logger.exception("Failed to seed quests")
 
+    # ============================================================
+    # ВАЖНО: Сначала создаём bot, потом webhook_server
+    # (webhook должен уметь отправлять сообщения от имени бота).
+    # ============================================================
+    logger.info("Creating Bot instance...")
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+    logger.info("Attaching bot to webhook_server...")
+    try:
+        set_bot(bot)
+    except Exception:
+        logger.exception("Failed to attach bot to webhook_server")
+
     logger.info("Starting webhook server...")
     port = int(os.getenv("PORT", "8080"))
     try:
@@ -145,12 +161,6 @@ async def main() -> None:
         logger.warning(f"Webhook server not started: {e}")
     except Exception:
         logger.exception("Webhook server failed")
-
-    logger.info("Creating Bot instance...")
-    bot = Bot(
-        token=config.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
 
     logger.info("Creating Dispatcher with MemoryStorage (no Redis)...")
     storage = MemoryStorage()
