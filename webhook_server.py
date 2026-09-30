@@ -15,7 +15,16 @@ from utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
-PRO_DURATION_DAYS = 30
+
+# ============================================================
+# Длительность тарифов PRO (в днях)
+# ============================================================
+PRO_PLAN_DAYS = {
+    1: 30,
+    6: 180,
+    12: 365,
+}
+PRO_DEFAULT_DAYS = 30
 
 
 # ============================================================
@@ -75,12 +84,21 @@ def _pick_activated_message() -> str:
 # ============================================================
 # Выдача PRO
 # ============================================================
-async def _grant_pro(user_id: int, payment_id: str) -> bool:
+async def _grant_pro(
+    user_id: int,
+    payment_id: str,
+    months: int = 1,
+) -> bool:
     """
-    Выдаёт PRO на PRO_DURATION_DAYS.
+    Выдаёт PRO на N месяцев (1 / 6 / 12).
     Если PRO уже активна — продлевает.
     После — отправляет поздравительное сообщение.
+
+    ВАЖНО: months передаётся из metadata YooKassa.
+    Если months неизвестен — используется 30 дней (fallback).
     """
+    days = PRO_PLAN_DAYS.get(months, PRO_DEFAULT_DAYS)
+
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.id == user_id)
@@ -92,7 +110,7 @@ async def _grant_pro(user_id: int, payment_id: str) -> bool:
 
         now = datetime.now(timezone.utc)
         base = user.premium_until if (user.premium_until and user.premium_until > now) else now
-        user.premium_until = base + timedelta(days=PRO_DURATION_DAYS)
+        user.premium_until = base + timedelta(days=days)
 
         telegram_id = user.telegram_id
         premium_until = user.premium_until
@@ -100,15 +118,34 @@ async def _grant_pro(user_id: int, payment_id: str) -> bool:
         await session.commit()
 
     logger.info(
-        f"[YOOKASSA] PRO granted user={user_id} until={premium_until} "
-        f"(payment {payment_id})"
+        f"[YOOKASSA] PRO granted user={user_id} months={months} days={days} "
+        f"until={premium_until} (payment {payment_id})"
     )
 
+    # Пишем в Payment, сколько дней начислили (для отчётности)
+    try:
+        async with async_session() as session:
+            payment = (await session.execute(
+                select(Payment).where(Payment.yookassa_payment_id == payment_id)
+            )).scalar_one_or_none()
+            if payment:
+                payment.months = months
+                payment.days_granted = days
+                await session.commit()
+    except Exception:
+        logger.exception("[YOOKASSA] failed to save months/days in Payment")
+
+    # Аналитика
     try:
         await track(
             "pro_purchase",
             telegram_id=telegram_id,
-            payload={"type": "yookassa", "payment_id": payment_id},
+            payload={
+                "type": "yookassa",
+                "payment_id": payment_id,
+                "months": months,
+                "days_granted": days,
+            },
         )
     except Exception:
         logger.exception("[YOOKASSA] track failed")
@@ -120,7 +157,7 @@ async def _grant_pro(user_id: int, payment_id: str) -> bool:
             await _bot.send_message(
                 telegram_id,
                 _pick_activated_message()
-                + f"\n\n📅 PRO активна до: <b>{until_str}</b>",
+                + f"\n\n📅 PRO активна до: <b>{until_str}</b> ({days} дней)",
             )
         except Exception:
             logger.exception("[YOOKASSA] failed to send activation message")
@@ -181,7 +218,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             resolved_user_id = payment.user_id
 
         if resolved_user_id:
-            await _grant_pro(resolved_user_id, payment_id)
+            await _grant_pro(resolved_user_id, payment_id, months=months)
 
         return web.json_response({"status": "ok"})
 

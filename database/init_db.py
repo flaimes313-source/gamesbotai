@@ -109,6 +109,12 @@ MIGRATIONS = [
     "ALTER TABLE subscription_campaigns ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;",
     "ALTER TABLE subscription_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;",
     "CREATE INDEX IF NOT EXISTS ix_subscription_campaigns_deleted ON subscription_campaigns (deleted);",
+
+    # ============================================================
+    # Этап 6 — Информация о тарифе PRO в payments
+    # ============================================================
+    "ALTER TABLE payments ADD COLUMN IF NOT EXISTS months INTEGER;",
+    "ALTER TABLE payments ADD COLUMN IF NOT EXISTS days_granted INTEGER;",
 ]
 
 

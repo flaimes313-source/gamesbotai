@@ -280,6 +280,10 @@ class Payment(Base):
     payment_type: Mapped[str] = mapped_column(String(32), default="pro")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Информация о тарифе (заполняется webhook после успешной оплаты)
+    months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    days_granted: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -6,14 +6,9 @@
 2. premium_reminder_1d — за 1 день до окончания.
 3. premium_expired — в день окончания (или после).
 
-Hub сам проверит:
-- feature flag premium_reminder_enabled,
-- настройки юзера (premium_reminder_enabled),
-- тихие часы,
-- дневной лимит,
-- дубли.
+Hub сам проверит: флаги, настройки юзера, тихие часы, лимит, дубли.
 
-Cooldown (23ч для 3d/1d, 48ч для expired) — оставляем свой (правило фичи).
+Cooldown (23ч для 3d/1d, 48ч для expired) — оставляем свой.
 """
 
 import asyncio
@@ -34,8 +29,6 @@ logger = get_logger(__name__)
 # ============================================================
 # НАСТРОЙКИ
 # ============================================================
-PRO_DAYS = 30
-PRO_PRICE = 390
 REMIND_DAYS = (3, 1)
 CHECK_INTERVAL_SECONDS = 6 * 3600
 INITIAL_DELAY_SECONDS = 300
@@ -64,6 +57,32 @@ async def _was_sent_recently(
 
 
 # ============================================================
+# КЛАВИАТУРЫ С ТАРИФАМИ
+# ============================================================
+def _renew_kb(header: str = "💎 Продлить PRO") -> InlineKeyboardMarkup:
+    """
+    Клавиатура с 3 тарифами продления.
+    header — что написать на первой кнопке.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💎 1 мес — 390 ₽",
+                callback_data="buy_pro_1m",
+            )],
+            [InlineKeyboardButton(
+                text="🔥 6 мес — 1990 ₽ (-15%)",
+                callback_data="buy_pro_6m",
+            )],
+            [InlineKeyboardButton(
+                text="🚀 12 мес — 3490 ₽ (-25%)",
+                callback_data="buy_pro_12m",
+            )],
+        ]
+    )
+
+
+# ============================================================
 # ФОРМИРОВАНИЕ PAYLOAD
 # ============================================================
 def _build_expiring_payload(
@@ -80,15 +99,6 @@ def _build_expiring_payload(
         when = "завтра"
         title = "PRO истекает завтра"
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💎 Продлить PRO ({int(PRO_PRICE)} ₽)",
-                callback_data="buy_pro",
-            )],
-        ]
-    )
-
     text = (
         f"{emoji} <b>{title}</b>\n\n"
         f"Твоя PRO подписка заканчивается <b>{when}</b> "
@@ -98,23 +108,14 @@ def _build_expiring_payload(
         f"• 🚀 Расширенные режимы поиска\n"
         f"• 🤖 AI-помощник в чатах\n"
         f"• 🚫 Отсутствие рекламы\n\n"
-        f"Продли сейчас, чтобы ничего не потерять 👇"
+        f"💎 <b>Выбери тариф и продли сейчас:</b>"
     )
 
-    return {"text": text, "reply_markup": kb}
+    return {"text": text, "reply_markup": _renew_kb()}
 
 
 def _build_expired_payload() -> dict:
     """Payload для premium_expired."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💎 Возобновить PRO ({int(PRO_PRICE)} ₽)",
-                callback_data="buy_pro",
-            )],
-        ]
-    )
-
     text = (
         "😢 <b>PRO закончилось</b>\n\n"
         "Ты вернулся на обычный режим:\n"
@@ -122,19 +123,17 @@ def _build_expired_payload() -> dict:
         "• Ограниченные режимы поиска\n"
         "• Без AI-помощника в чатах\n"
         "• Реклама вернулась\n\n"
-        "Хочешь вернуть максимум? Подключи PRO снова 👇"
+        "💎 <b>Хочешь вернуть максимум? Выбери тариф:</b>"
     )
 
-    return {"text": text, "reply_markup": kb}
+    return {"text": text, "reply_markup": _renew_kb()}
 
 
 # ============================================================
 # ГЛАВНАЯ ФУНКЦИЯ
 # ============================================================
 async def send_premium_reminders(bot: Bot) -> None:
-    """
-    Проходит по юзерам с активным PRO, ставит в hub напоминания.
-    """
+    """Проходит по юзерам с активным PRO, ставит в hub напоминания."""
     now = datetime.now(timezone.utc)
 
     async with async_session() as session:
@@ -150,13 +149,11 @@ async def send_premium_reminders(bot: Bot) -> None:
         if user.premium_until is None:
             continue
 
-        # Сохраняем до выхода из сессии
         user_id = user.id
         user_tz = user.timezone
         telegram_id = user.telegram_id
         premium_until = user.premium_until
 
-        # Приводим к aware
         if premium_until.tzinfo is None:
             premium_until = premium_until.replace(tzinfo=timezone.utc)
 
@@ -172,7 +169,7 @@ async def send_premium_reminders(bot: Bot) -> None:
             ok = await schedule_notification(
                 user_id=user_id,
                 kind="premium_expired",
-                priority=1,   # очень высокий — игнорим дневной лимит
+                priority=1,
                 payload=payload,
                 tz_name=user_tz,
             )
@@ -192,7 +189,7 @@ async def send_premium_reminders(bot: Bot) -> None:
             ok = await schedule_notification(
                 user_id=user_id,
                 kind=event_name,
-                priority=1,   # очень высокий — игнорим дневной лимит
+                priority=1,
                 payload=payload,
                 tz_name=user_tz,
             )
