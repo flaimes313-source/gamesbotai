@@ -126,13 +126,21 @@ async def cb_buy_pro(callback: CallbackQuery):
         await callback.message.answer("Сначала отправь фото.")
         return
 
+    # Получаем username бота для return_url
+    try:
+        bot_me = await callback.bot.get_me()
+        bot_username = bot_me.username
+    except Exception:
+        bot_username = None
+
     try:
         from services.payments.yookassa_client import create_pro_payment
-        result = create_pro_payment(
+        result = await create_pro_payment(
             user.id,
             amount=float(plan["price"]),
             description=f"PRO {plan['label']}",
             months=plan["months"],
+            bot_username=bot_username,
         )
     except Exception:
         logger.exception("Payment creation failed")

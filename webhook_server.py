@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 from sqlalchemy import select
@@ -17,42 +17,58 @@ PRO_DURATION_DAYS = 30
 
 
 # ============================================================
-# Утилиты
+# Выдача PRO
 # ============================================================
 async def _grant_pro(user_id: int, payment_id: str) -> bool:
-    """Выдаёт PRO и логирует. Возвращает True при успехе."""
+    """
+    Выдаёт PRO на PRO_DURATION_DAYS.
+    Если PRO уже активна — продлевает.
+    Возвращает True при успехе.
+    """
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.id == user_id)
         )).scalar_one_or_none()
+
         if user is None:
-            logger.warning(f"User {user_id} not found for PRO grant")
+            logger.warning(f"[YOOKASSA] User {user_id} not found for PRO grant")
             return False
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         base = user.premium_until if (user.premium_until and user.premium_until > now) else now
         user.premium_until = base + timedelta(days=PRO_DURATION_DAYS)
 
-        await session.commit()
-        logger.info(f"PRO granted to user {user_id} until {user.premium_until} (payment {payment_id})")
+        telegram_id = user.telegram_id
+        premium_until = user.premium_until
 
-    await track("pro_purchase", telegram_id=user.telegram_id, payload={"type": "yookassa", "payment_id": payment_id})
+        await session.commit()
+
+    logger.info(
+        f"[YOOKASSA] PRO granted user={user_id} until={premium_until} "
+        f"(payment {payment_id})"
+    )
+
+    await track(
+        "pro_purchase",
+        telegram_id=telegram_id,
+        payload={"type": "yookassa", "payment_id": payment_id},
+    )
     return True
 
 
 # ============================================================
-# Обработчики webhook YooKassa
+# Webhook YooKassa
 # ============================================================
 async def handle_yookassa_webhook(request: web.Request) -> web.Response:
     """
     Принимает webhook от YooKassa.
-    Обрабатывает события: payment.succeeded, payment.canceled, refund.succeeded.
-    Защита от повторной обработки через статус в БД.
+    События: payment.succeeded, payment.canceled, refund.succeeded.
+    Защита от повторной обработки — по Payment.status в БД.
     """
     try:
         data = await request.json()
     except Exception:
-        logger.exception("Webhook: bad JSON")
+        logger.exception("[YOOKASSA] bad JSON in webhook")
         return web.json_response({"status": "bad_request"}, status=400)
 
     event = data.get("event", "")
@@ -60,27 +76,33 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
     payment_id = obj.get("id")
     status = obj.get("status")
     metadata = obj.get("metadata", {}) or {}
-    user_id = metadata.get("user_id")
+    user_id_meta = metadata.get("user_id")
+    months = int(metadata.get("months", 1) or 1)
 
-    logger.info(f"Webhook received: event={event} payment_id={payment_id} status={status}")
+    logger.info(
+        f"[YOOKASSA] webhook event={event} payment_id={payment_id} "
+        f"status={status} meta_user={user_id_meta} months={months}"
+    )
 
     # ---------- payment.succeeded ----------
     if event == "payment.succeeded" and payment_id:
+        resolved_user_id = None
+
         async with async_session() as session:
             payment = (await session.execute(
                 select(Payment).where(Payment.yookassa_payment_id == payment_id)
             )).scalar_one_or_none()
 
             if payment is None:
-                logger.warning(f"Payment {payment_id} not found in DB")
+                logger.warning(f"[YOOKASSA] payment {payment_id} not found in DB")
                 return web.json_response({"status": "not_found"}, status=404)
 
             if payment.status == "succeeded":
-                logger.info(f"Payment {payment_id} already processed")
+                logger.info(f"[YOOKASSA] payment {payment_id} already processed")
                 return web.json_response({"status": "already_processed"})
 
             payment.status = "succeeded"
-            payment.paid_at = datetime.utcnow()
+            payment.paid_at = datetime.now(timezone.utc)
             await session.commit()
             resolved_user_id = payment.user_id
 
@@ -99,7 +121,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             if payment and payment.status != "succeeded":
                 payment.status = "canceled"
                 await session.commit()
-                logger.info(f"Payment {payment_id} canceled")
+                logger.info(f"[YOOKASSA] payment {payment_id} canceled")
 
         return web.json_response({"status": "ok"})
 
@@ -113,7 +135,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             if payment:
                 payment.status = "refunded"
                 await session.commit()
-                logger.info(f"Payment {payment_id} refunded")
+                logger.info(f"[YOOKASSA] payment {payment_id} refunded")
 
         return web.json_response({"status": "ok"})
 
@@ -121,14 +143,12 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
 
 
 # ============================================================
-# Health-check (для BotHost и мониторинга)
+# Health-check
 # ============================================================
 async def handle_health(request: web.Request) -> web.Response:
-    """Liveness/readiness probe для хостинга."""
     checks = {"web": "ok"}
     status_code = 200
 
-    # БД доступна?
     try:
         async with async_session() as session:
             await session.execute(select(1))
@@ -141,19 +161,18 @@ async def handle_health(request: web.Request) -> web.Response:
         {
             "status": "healthy" if status_code == 200 else "degraded",
             "checks": checks,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
         status=status_code,
     )
 
 
 async def handle_root(request: web.Request) -> web.Response:
-    """Корень — простая страница, чтобы хостинг не ругался."""
     return web.json_response({"service": "ai_social_bot", "status": "running"})
 
 
 # ============================================================
-# Запуск сервера
+# Запуск
 # ============================================================
 def create_app() -> web.Application:
     app = web.Application()
