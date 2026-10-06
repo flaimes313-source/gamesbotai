@@ -1,8 +1,9 @@
 """
-Крючки после первого анализа (Этап A + Этап B).
+Крючки после анализа (Этап A + Этап B).
 
-Этап A: заглушки «Скоро» для 4 кнопок.
+Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?» в share_kb.
 Этап B: «Какой ты сегодня?» — реальный вызов AI.
+Заглушки: C/D/E/F — «Скоро».
 """
 
 from aiogram import F, Router
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# ТЕКСТЫ ЗАГЛУШЕК (для Этапов C/D/E/F)
+# ТЕКСТЫ ЗАГЛУШЕК (Этапы C/D/E/F)
 # ============================================================
 HOOK_TEXTS = {
     "impression": {
@@ -121,13 +122,12 @@ async def _handle_hook(callback: CallbackQuery, hook_key: str) -> None:
 
 
 # ============================================================
-# ЭТАП B — «Какой ты сегодня?» (реальный AI)
+# ЭТАП B — «Какой ты сегодня?»
 # ============================================================
 @router.callback_query(F.data == "hook_today")
 async def cb_hook_today(callback: CallbackQuery):
     await callback.answer("Анализирую твой вайб...")
 
-    # Ищем юзера
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
@@ -137,7 +137,6 @@ async def cb_hook_today(callback: CallbackQuery):
         await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
         return
 
-    # Генерим
     try:
         from services.analysis.today_vibe import (
             generate_today_vibe_for_user,
@@ -155,7 +154,6 @@ async def cb_hook_today(callback: CallbackQuery):
 
     text = format_today_vibe(result)
 
-    # Кнопки
     rows = []
     if not result.get("is_pro") and result.get("allowed"):
         rows.append([InlineKeyboardButton(
@@ -196,7 +194,7 @@ async def cb_hook_today(callback: CallbackQuery):
 
 
 # ============================================================
-# ЗАГЛУШКИ ЭТАПОВ C/D/E/F
+# ЗАГЛУШКИ C/D/E/F
 # ============================================================
 @router.callback_query(F.data == "hook_impression")
 async def cb_hook_impression(callback: CallbackQuery):

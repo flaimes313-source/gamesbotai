@@ -56,6 +56,10 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 
 
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
+    """
+    Клавиатура под карточкой анализа.
+    Кнопка «🔥 Что ещё?» ведёт в меню крючков.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -65,6 +69,10 @@ def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(
                 text="🔄 Новый анализ",
                 callback_data="new_analysis",
+            )],
+            [InlineKeyboardButton(
+                text="🔥 Что ещё?",
+                callback_data="hook_menu",
             )],
         ]
     )
@@ -171,8 +179,7 @@ def cancel_kb() -> InlineKeyboardMarkup:
 
 def first_analysis_kb() -> InlineKeyboardMarkup:
     """
-    Клавиатура крючков после ПЕРВОГО анализа.
-    Ведёт в бесплатные фичи (или заглушки).
+    Клавиатура крючков (после первого анализа + раз в 3 дня).
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[

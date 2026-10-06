@@ -1,4 +1,5 @@
 import io
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.types import (
@@ -14,7 +15,13 @@ from bot.handlers.start import get_or_create_user
 from bot.keyboards.main import share_kb
 from config import config
 from database.connection import async_session
-from database.models import PhotoAnalysis, Profile, User, UserAchievement
+from database.models import (
+    PhotoAnalysis,
+    Profile,
+    RewardClaim,
+    User,
+    UserAchievement,
+)
 from services.achievements import unlock_achievement
 from services.analytics.tracker import track
 from services.analysis.photo_analysis import analyze_photo
@@ -36,6 +43,15 @@ router = Router()
 logger = get_logger(__name__)
 
 
+# ============================================================
+# КОНСТАНТЫ
+# ============================================================
+HOOKS_COOLDOWN_DAYS = 3
+
+
+# ============================================================
+# УТИЛИТЫ
+# ============================================================
 async def _download_photo(message: Message) -> bytes:
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
@@ -45,14 +61,13 @@ async def _download_photo(message: Message) -> bytes:
 
 
 def _build_result_text(analysis: dict, is_legendary: bool = False) -> str:
-    """
-    Собирает текст результата анализа.
-    При is_legendary=True — добавляет плашку «✨ ЛЕГЕНДАРНЫЙ АРХЕТИП!».
-    """
     scores = analysis.get("scores", {}) or {}
 
     if is_legendary:
-        header = f"✨🔥 <b>ЛЕГЕНДАРНЫЙ АРХЕТИП!</b> 🔥✨\n\n🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>"
+        header = (
+            f"✨🔥 <b>ЛЕГЕНДАРНЫЙ АРХЕТИП!</b> 🔥✨\n\n"
+            f"🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>"
+        )
     else:
         header = f"🧨 <b>{analysis.get('archetype', 'ТВОЙ АРХЕТИП')}</b>"
 
@@ -91,9 +106,6 @@ async def _get_achievement_badges(user_id: int) -> list:
 
 
 async def _count_unique_legendaries(user_id: int) -> int:
-    """
-    Считает, сколько РАЗНЫХ легендарных архетипов уже собрал юзер.
-    """
     async with async_session() as session:
         rows = (await session.execute(
             select(Profile.archetype).where(Profile.user_id == user_id)
@@ -107,11 +119,6 @@ async def _count_unique_legendaries(user_id: int) -> int:
 
 
 async def _handle_legendary_achievements(user_id: int, telegram_id: int) -> None:
-    """
-    Триггерит достижения за легендарку:
-    - first_legendary — если это первая.
-    - five_legendaries — если собрано >= 5 разных.
-    """
     try:
         unique_count = await _count_unique_legendaries(user_id)
 
@@ -136,6 +143,49 @@ async def _handle_legendary_achievements(user_id: int, telegram_id: int) -> None
         logger.exception("Legendary achievements failed")
 
 
+# ============================================================
+# КРЮЧКИ: показ раз в 3 дня
+# ============================================================
+async def _should_show_hooks(user_id: int) -> bool:
+    """
+    True, если с последнего показа крючков прошло
+    HOOKS_COOLDOWN_DAYS дней (или они не показывались).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=HOOKS_COOLDOWN_DAYS)
+
+    try:
+        async with async_session() as session:
+            cnt = (await session.execute(
+                select(func.count(RewardClaim.id))
+                .where(RewardClaim.user_id == user_id)
+                .where(RewardClaim.reward_code.like("hooks_shown_%"))
+                .where(RewardClaim.claimed_at > cutoff)
+            )).scalar_one()
+            return cnt == 0
+    except Exception:
+        logger.exception("[HOOKS] should_show check failed")
+        return False
+
+
+async def _mark_hooks_shown(user_id: int) -> None:
+    """Помечает, что крючки показаны (для cooldown)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        async with async_session() as session:
+            session.add(RewardClaim(
+                user_id=user_id,
+                reward_code=f"hooks_shown_{today}",
+                payload={"shown_at": datetime.now(timezone.utc).isoformat()},
+            ))
+            await session.commit()
+    except Exception:
+        # UNIQUE violation — уже показали сегодня, ок
+        pass
+
+
+# ============================================================
+# ОСНОВНОЙ ХЕНДЛЕР
+# ============================================================
 @router.message(F.photo)
 async def handle_photo(message: Message):
     telegram_id = message.from_user.id
@@ -186,9 +236,7 @@ async def handle_photo(message: Message):
 
     await track("analysis_completed", telegram_id=telegram_id)
 
-    # ============================================================
-    # РЕДКОСТЬ: возможно, подменим архетип на легендарный
-    # ============================================================
+    # Легендарка
     original_archetype = analysis.get("archetype", "")
     try:
         final_archetype, is_legendary_flag = await maybe_make_legendary(
@@ -216,7 +264,7 @@ async def handle_photo(message: Message):
         session.add(profile)
         await session.commit()
 
-    # Вовлечение: анализ + новый архетип + челлендж
+    # Вовлечение
     engagement_result = {}
     try:
         from services.engagement.service import on_photo_analyzed
@@ -224,7 +272,7 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Engagement on_photo_analyzed failed")
 
-    # Легендарка: события, очки, cooldown, достижения
+    # Легендарка: события, очки, cooldown
     if is_legendary_flag:
         try:
             await track(
@@ -257,7 +305,6 @@ async def handle_photo(message: Message):
         logger.exception("Referral reward failed")
 
     # Достижения
-    is_first_analysis = False
     try:
         await unlock_achievement(user.id, "first_photo")
         scores = analysis.get("scores", {}) or {}
@@ -270,8 +317,6 @@ async def handle_photo(message: Message):
             cnt = (await session.execute(
                 select(func.count(PhotoAnalysis.id)).where(PhotoAnalysis.user_id == user.id)
             )).scalar_one()
-            if cnt == 1:
-                is_first_analysis = True
             if cnt == 2:
                 await track("second_analysis", telegram_id=telegram_id)
             if cnt >= 5:
@@ -345,7 +390,7 @@ async def handle_photo(message: Message):
         logger.exception("Card generation failed")
         await message.answer(full_caption, reply_markup=share_kb(share_url))
 
-    # Уведомление о челлендже
+    # Челлендж
     challenge_result = engagement_result.get("challenge") or {}
     if challenge_result.get("completed"):
         try:
@@ -359,19 +404,20 @@ async def handle_photo(message: Message):
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
-    # 🎣 Если это первый анализ — показываем крючки
-    if is_first_analysis:
-        try:
+    # 🎣 Крючки раз в 3 дня
+    try:
+        if await _should_show_hooks(user.id):
             from bot.keyboards.main import first_analysis_kb
             await message.answer(
                 "🔥 <b>Что Вайбми может узнать о тебе дальше?</b>\n\n"
                 "Выбери, что интересно:",
                 reply_markup=first_analysis_kb(),
             )
-        except Exception:
-            logger.exception("Failed to send first_analysis_kb")
+            await _mark_hooks_shown(user.id)
+    except Exception:
+        logger.exception("Failed to send first_analysis_kb")
 
-    # Отправляем накопленные уведомления
+    # Уведомления
     try:
         from services.engagement.notifications import flush_notifications
         await flush_notifications(message.bot, telegram_id)
