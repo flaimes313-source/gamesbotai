@@ -93,8 +93,6 @@ async def _get_achievement_badges(user_id: int) -> list:
 async def _count_unique_legendaries(user_id: int) -> int:
     """
     Считает, сколько РАЗНЫХ легендарных архетипов уже собрал юзер.
-    Читает profiles.archetype и фильтрует по списку LEGENDARY_ARCHETYPES.
-    Используется для достижения five_legendaries.
     """
     async with async_session() as session:
         rows = (await session.execute(
@@ -113,7 +111,6 @@ async def _handle_legendary_achievements(user_id: int, telegram_id: int) -> None
     Триггерит достижения за легендарку:
     - first_legendary — если это первая.
     - five_legendaries — если собрано >= 5 разных.
-    Безопасно: любая ошибка логируется, но не валит поток.
     """
     try:
         unique_count = await _count_unique_legendaries(user_id)
@@ -202,8 +199,6 @@ async def handle_photo(message: Message):
         final_archetype, is_legendary_flag = original_archetype, False
 
     if is_legendary_flag:
-        # Подменяем архетип во всём analysis, чтобы и в БД, и на карточке,
-        # и в тексте, и в share-тексте было одно и то же имя.
         analysis["archetype"] = final_archetype
 
     # Сохраняем
@@ -229,11 +224,8 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Engagement on_photo_analyzed failed")
 
-    # ============================================================
     # Легендарка: события, очки, cooldown, достижения
-    # ============================================================
     if is_legendary_flag:
-        # Событие: выпала легендарка
         try:
             await track(
                 "legendary_archetype",
@@ -246,21 +238,18 @@ async def handle_photo(message: Message):
         except Exception:
             logger.exception("track legendary_archetype failed")
 
-        # Очки за легендарку (вместо обычных 30 за new_archetype —
-        # начисляем дополнительно, чтобы не ломать on_photo_analyzed)
         try:
             from services.engagement.points import add_custom_points
             await add_custom_points(user.id, LEGENDARY_POINTS)
         except Exception:
             logger.exception("add_custom_points legendary failed")
 
-        # Обновляем cooldown: last_legendary_at = now
         try:
             await mark_legendary_received(user.id)
         except Exception:
             logger.exception("mark_legendary_received failed")
 
-    # ⭐ РЕФЕРАЛЬНАЯ НАГРАДА: если у юзера есть referrer — начислить ему
+    # Реферальная награда
     try:
         from services.engagement.referrals import on_referred_user_analyzed
         await on_referred_user_analyzed(user.id)
@@ -268,6 +257,7 @@ async def handle_photo(message: Message):
         logger.exception("Referral reward failed")
 
     # Достижения
+    is_first_analysis = False
     try:
         await unlock_achievement(user.id, "first_photo")
         scores = analysis.get("scores", {}) or {}
@@ -280,6 +270,8 @@ async def handle_photo(message: Message):
             cnt = (await session.execute(
                 select(func.count(PhotoAnalysis.id)).where(PhotoAnalysis.user_id == user.id)
             )).scalar_one()
+            if cnt == 1:
+                is_first_analysis = True
             if cnt == 2:
                 await track("second_analysis", telegram_id=telegram_id)
             if cnt >= 5:
@@ -287,7 +279,7 @@ async def handle_photo(message: Message):
     except Exception:
         logger.exception("Achievement unlock failed")
 
-    # Легендарные достижения — отдельно, после базовых
+    # Легендарные достижения
     if is_legendary_flag:
         await _handle_legendary_achievements(user.id, telegram_id)
 
@@ -299,7 +291,6 @@ async def handle_photo(message: Message):
 
     archetype = analysis.get("archetype", "")
 
-    # Для легендарки — особый share-призыв вместо общего pick_share_call
     if is_legendary_flag:
         share_call = (
             "🔥 Мне выпал ЛЕГЕНДАРНЫЙ архетип! "
@@ -368,6 +359,18 @@ async def handle_photo(message: Message):
     await track("share_generated", telegram_id=telegram_id)
     await _trigger_post_analysis_hooks(message.bot, telegram_id)
 
+    # 🎣 Если это первый анализ — показываем крючки
+    if is_first_analysis:
+        try:
+            from bot.keyboards.main import first_analysis_kb
+            await message.answer(
+                "🔥 <b>Что Вайбми может узнать о тебе дальше?</b>\n\n"
+                "Выбери, что интересно:",
+                reply_markup=first_analysis_kb(),
+            )
+        except Exception:
+            logger.exception("Failed to send first_analysis_kb")
+
     # Отправляем накопленные уведомления
     try:
         from services.engagement.notifications import flush_notifications
@@ -403,7 +406,6 @@ async def cb_do_share(callback: CallbackQuery):
     bot_username = (await callback.bot.get_me()).username
     share_url = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
-    # Если последний архетип — легендарный, особый share-призыв
     if profile_archetype and is_legendary(profile_archetype):
         share_call = (
             "🔥 Мне выпал ЛЕГЕНДАРНЫЙ архетип! "

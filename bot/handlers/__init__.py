@@ -7,6 +7,7 @@ from bot.handlers import (
     vibe_report,
     compatibility,
     settings_notifications,
+    vibe_hooks,
     matching,
     compare,
     tests,
@@ -40,7 +41,8 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
     root_router.include_router(vibe_report.router)
-    root_router.include_router(compatibility.router)          # ← 💥 Совместимость
+    root_router.include_router(compatibility.router)
+    root_router.include_router(vibe_hooks.router)              # ← 🎣 Крючки
     root_router.include_router(settings_notifications.router)
     root_router.include_router(timezone.router)
     root_router.include_router(engagement.router)

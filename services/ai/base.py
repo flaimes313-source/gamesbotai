@@ -54,6 +54,9 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
+    # --------------------------------------------------------
+    # Чат
+    # --------------------------------------------------------
     @abstractmethod
     async def generate_chat_reply_suggestions(
         self,
@@ -72,6 +75,9 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
+    # --------------------------------------------------------
+    # Вайб-отчёт (Шаг 1.3)
+    # --------------------------------------------------------
     @abstractmethod
     async def generate_vibe_report(
         self,
@@ -80,6 +86,9 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         ...
 
+    # --------------------------------------------------------
+    # Гороскоп (Этап 2)
+    # --------------------------------------------------------
     @abstractmethod
     async def generate_horoscope(
         self,
@@ -96,31 +105,38 @@ class AIProvider(ABC):
         profile_data: Dict[str, Any],
         celebrities_text: str,
     ) -> Dict[str, Any]:
-        """
-        Сравнивает юзера с 20 персонажами.
+        ...
 
-        Параметры:
-            profile_data:
-                {
-                    "archetype": str,
-                    "vibe": str,
-                    "chaos": int,
-                    "charisma": int,
-                    "humor": int,
-                    "energy": int,
-                    "intellect": int,
-                    "creativity": int,
-                    "confidence": int,
-                }
-            celebrities_text: строка со списком 20 персонажей
-                в формате "code | имя | архетип | chaos=..,charisma=..".
+    # --------------------------------------------------------
+    # «Какой ты сегодня?» (Этап B)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_today_vibe(
+        self,
+        profile_data: Dict[str, Any],
+        photo_context: str,
+    ) -> Dict[str, Any]:
+        """
+        Короткий анализ «как выглядишь сегодня».
+
+        profile_data:
+            {
+                "user_name": str,
+                "archetype": str,
+                "vibe": str,
+                "charisma": int, "confidence": int, "energy": int,
+                "sociability": int, "chaos": int, "humor": int,
+            }
+        photo_context: str — краткое описание фото (из последнего analysis_json).
 
         Возвращает:
             {
-                "results": [
-                    {"code": str, "match": int, "reason": str},
-                    ...3 штуки...
-                ]
+                "main_text": str,
+                "confidence": int,
+                "energy": int,
+                "sociability": int,
+                "attractiveness": int,
+                "danger_line": str,
             }
         """
         ...

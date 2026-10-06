@@ -17,6 +17,7 @@ from prompts.message_helper import MESSAGE_HELPER_PROMPT
 from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
 from prompts.test_question import TEST_QUESTION_PROMPT
 from prompts.test_result import TEST_RESULT_PROMPT
+from prompts.today_vibe import TODAY_VIBE_PROMPT
 from prompts.vibe_report import VIBE_REPORT_PROMPT, VIBE_WEEKLY_PROMPT
 from services.ai.base import AIProvider
 from utils.logging import get_logger
@@ -24,6 +25,9 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================
+# MIME по magic bytes
+# ============================================================
 def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
     if image_bytes[:3] == b"\xff\xd8\xff":
         return "image/jpeg", "jpg"
@@ -38,6 +42,9 @@ def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
     return "image/jpeg", "jpg"
 
 
+# ============================================================
+# JSON-парсинг
+# ============================================================
 def _try_fix_json(text: str) -> str:
     s = text
     s = re.sub(r",(\s*[}\]])", r"\1", s)
@@ -106,6 +113,9 @@ def _parse_vibe_report_text(raw: str) -> Dict[str, str]:
     }
 
 
+# ============================================================
+# Провайдер
+# ============================================================
 class GigaChatProvider(AIProvider):
     """Реализация AIProvider поверх официального SDK GigaChat."""
 
@@ -173,6 +183,9 @@ class GigaChatProvider(AIProvider):
         )
         return _extract_json(raw)
 
+    # --------------------------------------------------------
+    # Анализ фото
+    # --------------------------------------------------------
     async def analyze_photo(
         self,
         image_bytes: bytes,
@@ -494,9 +507,6 @@ class GigaChatProvider(AIProvider):
         profile_data: Dict[str, Any],
         celebrities_text: str,
     ) -> Dict[str, Any]:
-        """
-        Совместимость со звёздами. Возвращает {"results": [...]}.
-        """
         prompt = COMPATIBILITY_PROMPT.format(
             archetype=profile_data.get("archetype", ""),
             vibe=profile_data.get("vibe", ""),
@@ -516,4 +526,33 @@ class GigaChatProvider(AIProvider):
             temperature_retry=0.4,
             max_tokens=800,
             log_tag="COMPAT",
+        )
+
+    # --------------------------------------------------------
+    # «Какой ты сегодня?» (Этап B)
+    # --------------------------------------------------------
+    async def generate_today_vibe(
+        self,
+        profile_data: Dict[str, Any],
+        photo_context: str,
+    ) -> Dict[str, Any]:
+        prompt = TODAY_VIBE_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+            vibe=profile_data.get("vibe", ""),
+            charisma=profile_data.get("charisma", 0),
+            confidence=profile_data.get("confidence", 0),
+            energy=profile_data.get("energy", 0),
+            sociability=profile_data.get("sociability", 0),
+            chaos=profile_data.get("chaos", 0),
+            humor=profile_data.get("humor", 0),
+            photo_context=photo_context,
+        )
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="TODAY_VIBE",
         )

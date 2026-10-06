@@ -167,3 +167,34 @@ def cancel_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
         ]
     )
+
+
+def first_analysis_kb() -> InlineKeyboardMarkup:
+    """
+    Клавиатура крючков после ПЕРВОГО анализа.
+    Ведёт в бесплатные фичи (или заглушки).
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="😎 Какой ты сегодня?",
+                callback_data="hook_today",
+            )],
+            [InlineKeyboardButton(
+                text="👀 Что обо мне думают?",
+                callback_data="hook_impression",
+            )],
+            [InlineKeyboardButton(
+                text="⚔️ Сравнить 2 фото",
+                callback_data="hook_compare",
+            )],
+            [InlineKeyboardButton(
+                text="🏆 Выбрать лучшее фото",
+                callback_data="hook_best_photo",
+            )],
+            [InlineKeyboardButton(
+                text="🤖 AI-друг",
+                callback_data="hook_ai_friend",
+            )],
+        ]
+    )
