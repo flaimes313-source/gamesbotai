@@ -71,11 +71,14 @@ EVENT_NAMES = {
     # Этап 3 — Социальные фичи
     "compat_viewed", "profile_viewed",
 
-    # Этап A — Крючки после первого анализа
+    # Этап A — Крючки
     "hook_clicked",
 
     # Этап B — «Какой ты сегодня?»
     "today_vibe_viewed",
+
+    # Этап C — «Что обо мне думают?»
+    "first_impression_viewed",
 
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",

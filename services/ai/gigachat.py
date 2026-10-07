@@ -11,6 +11,7 @@ from config import config
 from prompts.chat_helper import CHAT_ANALYSIS_PROMPT, CHAT_REPLY_PROMPT
 from prompts.compatibility import COMPATIBILITY_PROMPT
 from prompts.daily_result import DAILY_RESULT_PROMPT
+from prompts.first_impression import FIRST_IMPRESSION_PROMPT
 from prompts.horoscope import HOROSCOPE_PROMPT
 from prompts.match_description import MATCH_DESCRIPTION_PROMPT
 from prompts.message_helper import MESSAGE_HELPER_PROMPT
@@ -528,9 +529,6 @@ class GigaChatProvider(AIProvider):
             log_tag="COMPAT",
         )
 
-    # --------------------------------------------------------
-    # «Какой ты сегодня?» (Этап B)
-    # --------------------------------------------------------
     async def generate_today_vibe(
         self,
         profile_data: Dict[str, Any],
@@ -555,4 +553,31 @@ class GigaChatProvider(AIProvider):
             temperature_retry=0.4,
             max_tokens=500,
             log_tag="TODAY_VIBE",
+        )
+
+    # --------------------------------------------------------
+    # «Что обо мне думают?» (Этап C)
+    # --------------------------------------------------------
+    async def generate_first_impression(
+        self,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        prompt = FIRST_IMPRESSION_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+            vibe=profile_data.get("vibe", ""),
+            charisma=profile_data.get("charisma", 0),
+            confidence=profile_data.get("confidence", 0),
+            humor=profile_data.get("humor", 0),
+            energy=profile_data.get("energy", 0),
+            sociability=profile_data.get("sociability", 0),
+            creativity=profile_data.get("creativity", 0),
+        )
+        messages = [Messages(role=MessagesRole.SYSTEM, content=prompt)]
+        return await self._chat_json(
+            messages,
+            temperature_first=0.9,
+            temperature_retry=0.4,
+            max_tokens=500,
+            log_tag="FIRST_IMPRESSION",
         )

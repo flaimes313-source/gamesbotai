@@ -116,27 +116,35 @@ class AIProvider(ABC):
         profile_data: Dict[str, Any],
         photo_context: str,
     ) -> Dict[str, Any]:
+        ...
+
+    # --------------------------------------------------------
+    # «Что обо мне думают?» (Этап C)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_first_impression(
+        self,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
-        Короткий анализ «как выглядишь сегодня».
+        Первое впечатление о юзере.
 
         profile_data:
             {
                 "user_name": str,
                 "archetype": str,
                 "vibe": str,
-                "charisma": int, "confidence": int, "energy": int,
-                "sociability": int, "chaos": int, "humor": int,
+                "charisma": int, "confidence": int, "humor": int,
+                "energy": int, "sociability": int, "creativity": int,
             }
-        photo_context: str — краткое описание фото (из последнего analysis_json).
 
         Возвращает:
             {
                 "main_text": str,
                 "confidence": int,
-                "energy": int,
-                "sociability": int,
-                "attractiveness": int,
-                "danger_line": str,
+                "interest": int,
+                "openness": int,
+                "hidden_trait": str,
             }
         """
         ...

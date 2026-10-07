@@ -1,9 +1,10 @@
 """
-Крючки после анализа (Этап A + Этап B).
+Крючки после анализа (Этап A + B + C).
 
 Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?» в share_kb.
 Этап B: «Какой ты сегодня?» — реальный вызов AI.
-Заглушки: C/D/E/F — «Скоро».
+Этап C: «Что обо мне думают?» — реальный вызов AI.
+Заглушки: D/E/F — «Скоро».
 """
 
 from aiogram import F, Router
@@ -20,20 +21,9 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# ТЕКСТЫ ЗАГЛУШЕК (Этапы C/D/E/F)
+# ЗАГЛУШКИ D/E/F
 # ============================================================
 HOOK_TEXTS = {
-    "impression": {
-        "title": "👀 Что обо мне думают?",
-        "text": (
-            "👀 <b>Что обо мне думают?</b>\n\n"
-            "Вайбми покажет:\n"
-            "• первое впечатление о тебе\n"
-            "• как тебя видят незнакомцы\n"
-            "• черту, которую замечают сразу\n\n"
-            "🛠 <b>Скоро в Вайбми.</b>"
-        ),
-    },
     "compare": {
         "title": "⚔️ Сравнить 2 фото",
         "text": (
@@ -194,13 +184,80 @@ async def cb_hook_today(callback: CallbackQuery):
 
 
 # ============================================================
-# ЗАГЛУШКИ C/D/E/F
+# ЭТАП C — «Что обо мне думают?»
 # ============================================================
 @router.callback_query(F.data == "hook_impression")
 async def cb_hook_impression(callback: CallbackQuery):
-    await _handle_hook(callback, "impression")
+    await callback.answer("Смотрю глазами незнакомца...")
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
+        return
+
+    try:
+        from services.analysis.first_impression import (
+            generate_first_impression_for_user,
+            format_first_impression,
+        )
+        result = await generate_first_impression_for_user(user.id, callback.from_user.id)
+    except Exception:
+        logger.exception("[HOOK] first_impression failed")
+        await callback.message.answer("😔 Не удалось. Попробуй позже.")
+        return
+
+    if result is None:
+        await callback.message.answer("😔 Не удалось. Попробуй позже.")
+        return
+
+    text = format_first_impression(result)
+
+    rows = []
+    if not result.get("is_pro") and result.get("allowed"):
+        rows.append([InlineKeyboardButton(
+            text="💎 Открыть полный разбор",
+            callback_data="pro_menu",
+        )])
+    rows.append([InlineKeyboardButton(
+        text="🔄 Ещё раз",
+        callback_data="hook_impression",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🔥 Что ещё?",
+        callback_data="hook_menu",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🏠 В главное меню",
+        callback_data="back_to_main",
+    )])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    try:
+        await callback.message.answer(text, reply_markup=kb)
+    except Exception:
+        logger.exception("[HOOK] send failed")
+
+    try:
+        await track(
+            "first_impression_viewed",
+            telegram_id=callback.from_user.id,
+            payload={
+                "is_pro": result.get("is_pro", False),
+                "allowed": result.get("allowed", False),
+                "reason": result.get("reason", ""),
+            },
+        )
+    except Exception:
+        logger.exception("[HOOK] track failed")
 
 
+# ============================================================
+# ЗАГЛУШКИ D/E/F
+# ============================================================
 @router.callback_query(F.data == "hook_compare")
 async def cb_hook_compare(callback: CallbackQuery):
     await _handle_hook(callback, "compare")
