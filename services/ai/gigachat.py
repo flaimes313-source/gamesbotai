@@ -165,6 +165,13 @@ class GigaChatProvider(AIProvider):
         model: Optional[str] = None,
         log_tag: str = "JSON",
     ) -> Dict[str, Any]:
+        """
+        Три попытки:
+        1. temp=temperature_first
+        2. пауза 1.5 сек, temp=temperature_retry
+        3. пауза 4 сек, temp=temperature_retry
+        """
+        # Попытка 1
         try:
             raw = await self._chat(
                 messages,
@@ -174,8 +181,31 @@ class GigaChatProvider(AIProvider):
             )
             return _extract_json(raw)
         except Exception as e1:
-            logger.warning(f"[{log_tag}] Attempt 1 failed: {e1}. Retrying with temp={temperature_retry}…")
+            logger.warning(
+                f"[{log_tag}] Attempt 1 failed: {e1}. "
+                f"Retry in 1.5s with temp={temperature_retry}…"
+            )
 
+        await asyncio.sleep(1.5)
+
+        # Попытка 2
+        try:
+            raw = await self._chat(
+                messages,
+                temperature=temperature_retry,
+                max_tokens=max_tokens,
+                model=model,
+            )
+            return _extract_json(raw)
+        except Exception as e2:
+            logger.warning(
+                f"[{log_tag}] Attempt 2 failed: {e2}. "
+                f"Retry in 4s…"
+            )
+
+        await asyncio.sleep(4)
+
+        # Попытка 3 (последняя)
         raw = await self._chat(
             messages,
             temperature=temperature_retry,

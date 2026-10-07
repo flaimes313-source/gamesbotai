@@ -126,6 +126,7 @@ async def generate_first_impression_for_user(
             "is_pro": is_pro,
         }
 
+    # Лимит тратится ТОЛЬКО если AI сработал
     if not is_pro:
         await _mark_used(user_id)
 
@@ -154,6 +155,12 @@ def format_first_impression(result: Dict[str, Any]) -> str:
             return (
                 "👀 <b>Что обо мне думают?</b>\n\n"
                 "Сначала отправь фото — я должен знать твой вайб."
+            )
+        if reason == "ai_failed":
+            return (
+                "😔 <b>AI сейчас перегружен</b>\n\n"
+                "GigaChat временно не отвечает — попробуй через минуту.\n\n"
+                "🔁 <b>Лимит Free не потрачен.</b>"
             )
         return "😔 Не получилось. Попробуй позже."
 
