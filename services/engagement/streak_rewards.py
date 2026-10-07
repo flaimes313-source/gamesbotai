@@ -1,6 +1,11 @@
 """
 Награды за стрики: 7 → 1 день PRO, 30 → 3 дня PRO, 100 → 7 дней PRO.
 Разовые.
+
+ВАЖНО: порядок claim → grant.
+- Сначала claim_reward (атомарно фиксирует факт).
+- Потом grant_pro_days (начисляет PRO).
+- Если claim не прошёл (уже получал) — grant НЕ вызывается.
 """
 from sqlalchemy import select
 
@@ -25,9 +30,7 @@ async def check_streak_reward(user_id: int, streak: int) -> None:
     Проверяет milestone стрика и выдаёт PRO, если положено.
     Разово.
 
-    Порядок: сначала grant_pro_days, потом claim_reward.
-    Если grant упадёт — claim не сработает, и при следующем вызове
-    попробуем снова. Это снижает риск потери награды.
+    Порядок: claim_reward → grant_pro_days.
     """
     reward_data = STREAK_PRO_REWARDS.get(streak)
     if reward_data is None:
@@ -45,24 +48,37 @@ async def check_streak_reward(user_id: int, streak: int) -> None:
         logger.warning(f"[STREAK_REWARD] user {user_id} not found")
         return
 
-    # Выдаём PRO
+    telegram_id = user.telegram_id
+
+    # 1. Атомарно фиксируем факт выдачи. Если уже получал — пропускаем.
+    try:
+        claimed = await claim_reward(
+            user_id,
+            reward_code,
+            payload={"streak": streak},
+        )
+    except Exception:
+        logger.exception(f"[STREAK_REWARD] claim failed for {reward_code}")
+        return
+
+    if not claimed:
+        # Уже получал — не выдаём PRO повторно
+        return
+
+    # 2. Начисляем PRO
     try:
         await grant_pro_days(user_id, days, reason=reward_code)
     except Exception:
-        logger.exception("[STREAK_REWARD] grant failed")
+        logger.exception(
+            f"[STREAK_REWARD] grant failed for {reward_code} (user={user_id}). "
+            f"PRO не начислен, но reward {reward_code} уже зафиксирован."
+        )
         return
 
-    # Фиксируем факт выдачи
-    claimed = await claim_reward(user_id, reward_code, payload={"streak": streak})
-    if not claimed:
-        # Уже получал раньше — grant выше продлил PRO лишний раз.
-        logger.warning(
-            f"[STREAK_REWARD] user={user_id} {reward_code} claimed twice (race?)"
-        )
-
+    # 3. Уведомление
     try:
         add_custom_notification(
-            user.telegram_id,
+            telegram_id,
             (
                 f"🔥 <b>НАГРАДА ЗА СТРИК {streak} ДНЕЙ!</b>\n\n"
                 f"Ты заходил {streak} дней подряд!\n\n"
