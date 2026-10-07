@@ -27,6 +27,14 @@ logger = get_logger(__name__)
 
 
 # ============================================================
+# Таймауты
+# ============================================================
+DEFAULT_CHAT_TIMEOUT = 20.0       # секунд на один запрос
+VISION_CHAT_TIMEOUT = 30.0        # для Vision — чуть больше
+RETRY_PAUSE_SECONDS = 2.0         # пауза между попытками
+
+
+# ============================================================
 # MIME по magic bytes
 # ============================================================
 def _detect_image_mime(image_bytes: bytes) -> tuple[str, str]:
@@ -132,13 +140,21 @@ class GigaChatProvider(AIProvider):
             f"vision_model={config.GIGACHAT_VISION_MODEL}"
         )
 
+    # --------------------------------------------------------
+    # Низкоуровневый вызов с timeout
+    # --------------------------------------------------------
     async def _chat(
         self,
         messages: List[Messages],
         temperature: float = 0.8,
         max_tokens: int = 1500,
         model: Optional[str] = None,
+        timeout: float = DEFAULT_CHAT_TIMEOUT,
     ) -> str:
+        """
+        Обёртка над SDK с таймаутом.
+        Если GigaChat не отвечает за `timeout` — прерываем запрос.
+        """
         used_model = model or config.GIGACHAT_MODEL
 
         def _sync_call() -> str:
@@ -154,8 +170,18 @@ class GigaChatProvider(AIProvider):
             response = self._client.chat(chat)
             return response.choices[0].message.content
 
-        return await asyncio.to_thread(_sync_call)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_sync_call),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[CHAT] Timeout {timeout}s exceeded (model={used_model})")
+            raise TimeoutError(f"GigaChat timeout {timeout}s")
 
+    # --------------------------------------------------------
+    # Вызов с retry (2 попытки, пауза 2 сек)
+    # --------------------------------------------------------
     async def _chat_json(
         self,
         messages: List[Messages],
@@ -164,12 +190,14 @@ class GigaChatProvider(AIProvider):
         max_tokens: int = 500,
         model: Optional[str] = None,
         log_tag: str = "JSON",
+        timeout: float = DEFAULT_CHAT_TIMEOUT,
     ) -> Dict[str, Any]:
         """
-        Три попытки:
+        Две попытки:
         1. temp=temperature_first
-        2. пауза 1.5 сек, temp=temperature_retry
-        3. пауза 4 сек, temp=temperature_retry
+        2. пауза 2 сек, temp=temperature_retry
+
+        Каждая попытка ограничена `timeout` (по умолчанию 20 сек).
         """
         # Попытка 1
         try:
@@ -178,44 +206,29 @@ class GigaChatProvider(AIProvider):
                 temperature=temperature_first,
                 max_tokens=max_tokens,
                 model=model,
+                timeout=timeout,
             )
             return _extract_json(raw)
         except Exception as e1:
             logger.warning(
                 f"[{log_tag}] Attempt 1 failed: {e1}. "
-                f"Retry in 1.5s with temp={temperature_retry}…"
+                f"Retry in {RETRY_PAUSE_SECONDS}s with temp={temperature_retry}…"
             )
 
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(RETRY_PAUSE_SECONDS)
 
-        # Попытка 2
-        try:
-            raw = await self._chat(
-                messages,
-                temperature=temperature_retry,
-                max_tokens=max_tokens,
-                model=model,
-            )
-            return _extract_json(raw)
-        except Exception as e2:
-            logger.warning(
-                f"[{log_tag}] Attempt 2 failed: {e2}. "
-                f"Retry in 4s…"
-            )
-
-        await asyncio.sleep(4)
-
-        # Попытка 3 (последняя)
+        # Попытка 2 (последняя)
         raw = await self._chat(
             messages,
             temperature=temperature_retry,
             max_tokens=max_tokens,
             model=model,
+            timeout=timeout,
         )
         return _extract_json(raw)
 
     # --------------------------------------------------------
-    # Анализ фото
+    # Анализ фото (Vision)
     # --------------------------------------------------------
     async def analyze_photo(
         self,
@@ -230,7 +243,15 @@ class GigaChatProvider(AIProvider):
             buf.name = filename
             return self._client.upload_file(buf)
 
-        file_obj = await asyncio.to_thread(_upload)
+        try:
+            file_obj = await asyncio.wait_for(
+                asyncio.to_thread(_upload),
+                timeout=VISION_CHAT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[VISION] Upload timeout")
+            raise TimeoutError("GigaChat upload timeout")
+
         logger.info(
             f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), "
             f"file_id={file_obj.id_}"
@@ -253,6 +274,7 @@ class GigaChatProvider(AIProvider):
             temperature=0.9,
             max_tokens=1200,
             model=vision_model,
+            timeout=VISION_CHAT_TIMEOUT,
         )
         logger.info(f"GigaChat photo analysis raw: {raw[:300]}")
         return _extract_json(raw)
