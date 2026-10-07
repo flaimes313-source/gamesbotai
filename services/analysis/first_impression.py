@@ -6,7 +6,7 @@
 2. Сбор данных профиля.
 3. AI → результат.
 4. Free: 3 характеристики + интрига (hidden_trait).
-5. Pro: + расширенный разбор.
+5. Pro: + расширенный разбор (first_notice, how_seen, improve).
 """
 
 from __future__ import annotations
@@ -139,6 +139,10 @@ async def generate_first_impression_for_user(
         "interest": int(result.get("interest", 0)),
         "openness": int(result.get("openness", 0)),
         "hidden_trait": result.get("hidden_trait", ""),
+        # Поля для Pro
+        "first_notice": result.get("first_notice", ""),
+        "how_seen": result.get("how_seen", ""),
+        "improve": result.get("improve", ""),
     }
 
 
@@ -164,26 +168,51 @@ def format_first_impression(result: Dict[str, Any]) -> str:
             )
         return "😔 Не получилось. Попробуй позже."
 
+    # ====================================================
+    # БАЗОВАЯ ЧАСТЬ (Free + Pro)
+    # ====================================================
     text = (
         f"👀 <b>ПЕРВОЕ ВПЕЧАТЛЕНИЕ О ТЕБЕ</b>\n\n"
         f"{result.get('main_text', '')}\n\n"
         f"Уверенность — <b>{result.get('confidence', 0)}%</b>\n"
         f"Интересность — <b>{result.get('interest', 0)}%</b>\n"
         f"Открытость — <b>{result.get('openness', 0)}%</b>\n\n"
-        f"😈 <b>А теперь самое интересное...</b>\n\n"
-        f"Какой ты кажешься человеку, который увидит тебя впервые?\n\n"
-        f"🔒 <i>{result.get('hidden_trait', 'Есть одна черта, которую люди замечают сразу.')}</i>\n\n"
     )
 
-    if not result.get("is_pro"):
+    if result.get("is_pro"):
+        # ====================================================
+        # PRO: полный разбор
+        # ====================================================
+        text += "✨ <b>Полный разбор (PRO)</b>\n\n"
+
+        hidden = result.get("hidden_trait", "")
+        if hidden:
+            text += f"🔒 <b>Черта, которую замечают сразу:</b>\n<i>{hidden}</i>\n\n"
+
+        first_notice = result.get("first_notice", "")
+        if first_notice:
+            text += f"👁 <b>Что замечают первым:</b>\n{first_notice}\n\n"
+
+        how_seen = result.get("how_seen", "")
+        if how_seen:
+            text += f"👥 <b>Как тебя видят незнакомцы:</b>\n{how_seen}\n\n"
+
+        improve = result.get("improve", "")
+        if improve:
+            text += f"💡 <b>Что можно усилить:</b>\n{improve}\n"
+    else:
+        # ====================================================
+        # FREE: интрига + блок Pro
+        # ====================================================
         text += (
+            "😈 <b>А теперь самое интересное...</b>\n\n"
+            "Какой ты кажешься человеку, который увидит тебя впервые?\n\n"
+            f"🔒 <i>{result.get('hidden_trait', 'Есть одна черта, которую люди замечают сразу.')}</i>\n\n"
             "💎 <b>Открыть полный разбор:</b>\n"
             "• Что именно замечают первым\n"
             "• Как тебя воспринимают незнакомцы\n"
             "• Что можно усилить\n\n"
+            "👇 Жми, чтобы узнать"
         )
-        text += "👇 Жми, чтобы узнать"
-    else:
-        text += "✨ <b>Pro-режим: полный разбор активирован.</b>"
 
     return text

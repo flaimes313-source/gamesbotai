@@ -151,10 +151,6 @@ class GigaChatProvider(AIProvider):
         model: Optional[str] = None,
         timeout: float = DEFAULT_CHAT_TIMEOUT,
     ) -> str:
-        """
-        Обёртка над SDK с таймаутом.
-        Если GigaChat не отвечает за `timeout` — прерываем запрос.
-        """
         used_model = model or config.GIGACHAT_MODEL
 
         def _sync_call() -> str:
@@ -179,9 +175,6 @@ class GigaChatProvider(AIProvider):
             logger.warning(f"[CHAT] Timeout {timeout}s exceeded (model={used_model})")
             raise TimeoutError(f"GigaChat timeout {timeout}s")
 
-    # --------------------------------------------------------
-    # Вызов с retry (2 попытки, пауза 2 сек)
-    # --------------------------------------------------------
     async def _chat_json(
         self,
         messages: List[Messages],
@@ -195,9 +188,7 @@ class GigaChatProvider(AIProvider):
         """
         Две попытки:
         1. temp=temperature_first
-        2. пауза 2 сек, temp=temperature_retry
-
-        Каждая попытка ограничена `timeout` (по умолчанию 20 сек).
+        2. пауза RETRY_PAUSE_SECONDS, temp=temperature_retry
         """
         # Попытка 1
         try:
@@ -217,7 +208,7 @@ class GigaChatProvider(AIProvider):
 
         await asyncio.sleep(RETRY_PAUSE_SECONDS)
 
-        # Попытка 2 (последняя)
+        # Попытка 2
         raw = await self._chat(
             messages,
             temperature=temperature_retry,
@@ -630,6 +621,6 @@ class GigaChatProvider(AIProvider):
             messages,
             temperature_first=0.9,
             temperature_retry=0.4,
-            max_tokens=500,
+            max_tokens=800,
             log_tag="FIRST_IMPRESSION",
         )

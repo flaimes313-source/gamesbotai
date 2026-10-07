@@ -129,22 +129,16 @@ class AIProvider(ABC):
         """
         Первое впечатление о юзере.
 
-        profile_data:
-            {
-                "user_name": str,
-                "archetype": str,
-                "vibe": str,
-                "charisma": int, "confidence": int, "humor": int,
-                "energy": int, "sociability": int, "creativity": int,
-            }
-
         Возвращает:
             {
                 "main_text": str,
                 "confidence": int,
                 "interest": int,
                 "openness": int,
-                "hidden_trait": str,
+                "hidden_trait": str,       # интрига для Free
+                "first_notice": str,       # раскрытие для Pro
+                "how_seen": str,           # для Pro
+                "improve": str,            # для Pro
             }
         """
         ...
