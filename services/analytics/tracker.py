@@ -83,6 +83,9 @@ EVENT_NAMES = {
     # Этап D — «Сравнение 2 фото»
     "photo_battle_viewed",
 
+    # Этап E — «Выбрать лучшее фото»
+    "best_photo_viewed",
+
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
 }

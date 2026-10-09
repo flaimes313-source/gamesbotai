@@ -9,6 +9,7 @@ from bot.handlers import (
     settings_notifications,
     vibe_hooks,
     photo_battle,
+    best_photo,
     matching,
     compare,
     tests,
@@ -42,6 +43,7 @@ def register_handlers(root_router: Router) -> None:
 
     # ⚔️ FSM-хендлеры — ВЫШЕ общих, чтобы фото в состоянии ловились ими, а не analysis
     root_router.include_router(photo_battle.router)
+    root_router.include_router(best_photo.router)
 
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)

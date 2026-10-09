@@ -8,6 +8,7 @@ from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
 
 from config import config
+from prompts.best_photo import BEST_PHOTO_PROMPT
 from prompts.chat_helper import CHAT_ANALYSIS_PROMPT, CHAT_REPLY_PROMPT
 from prompts.compatibility import COMPATIBILITY_PROMPT
 from prompts.daily_result import DAILY_RESULT_PROMPT
@@ -656,4 +657,50 @@ class GigaChatProvider(AIProvider):
             timeout=VISION_CHAT_TIMEOUT,
         )
         logger.info(f"[PHOTO_BATTLE] raw: {raw[:300]}")
+        return _extract_json(raw)
+
+    # --------------------------------------------------------
+    # Выбор лучшего фото (Этап E)
+    # --------------------------------------------------------
+    async def generate_best_photo(
+        self,
+        image_1_bytes: bytes,
+        image_2_bytes: bytes,
+        image_3_bytes: bytes,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # Загружаем три фото
+        file_1 = await self._upload_image(image_1_bytes, "photo_1")
+        file_2 = await self._upload_image(image_2_bytes, "photo_2")
+        file_3 = await self._upload_image(image_3_bytes, "photo_3")
+
+        prompt = BEST_PHOTO_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+        )
+
+        messages = [
+            Messages(role=MessagesRole.SYSTEM, content=prompt),
+            Messages(
+                role=MessagesRole.USER,
+                content=(
+                    "Сравни три фото. Первое — первое вложение, "
+                    "второе — второе вложение, третье — третье вложение. "
+                    "Верни JSON."
+                ),
+                attachments=[file_1.id_, file_2.id_, file_3.id_],
+            ),
+        ]
+
+        vision_model = config.GIGACHAT_VISION_MODEL
+        logger.info(f"[BEST_PHOTO] Analyzing with {vision_model}")
+
+        raw = await self._chat(
+            messages,
+            temperature=0.9,
+            max_tokens=900,
+            model=vision_model,
+            timeout=VISION_CHAT_TIMEOUT,
+        )
+        logger.info(f"[BEST_PHOTO] raw: {raw[:300]}")
         return _extract_json(raw)

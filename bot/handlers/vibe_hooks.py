@@ -1,11 +1,12 @@
 """
-Крючки после анализа (Этап A + B + C + D).
+Крючки после анализа (Этап A + B + C + D + E).
 
 Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?».
 Этап B: «Какой ты сегодня?» — AI.
 Этап C: «Что обо мне думают?» — AI.
 Этап D: «Сравнение 2 фото» — FSM.
-Заглушки: E, F — «Скоро».
+Этап E: «Выбрать лучшее фото» — FSM.
+Заглушка: F — «AI-друг».
 """
 
 from aiogram import F, Router
@@ -23,21 +24,9 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# ЗАГЛУШКИ E / F
+# ЗАГЛУШКА F (AI-друг)
 # ============================================================
 HOOK_TEXTS = {
-    "best_photo": {
-        "title": "🏆 Выбрать лучшее фото",
-        "text": (
-            "🏆 <b>Выбрать лучшее фото</b>\n\n"
-            "Отправь 3 фото — Вайбми выберет лучшее.\n\n"
-            "И скажет, какое подходит для:\n"
-            "• Telegram\n"
-            "• знакомств\n"
-            "• делового профиля\n\n"
-            "🛠 <b>Скоро в Вайбми.</b>"
-        ),
-    },
     "ai_friend": {
         "title": "🤖 AI-друг",
         "text": (
@@ -263,7 +252,6 @@ async def cb_hook_compare(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
         return
 
-    # Проверка лимита + сразу сохраняем user_id
     from services.analysis.photo_battle import _check_limit
     allowed, is_pro = await _check_limit(user.id, callback.from_user.id)
     if not allowed:
@@ -278,7 +266,6 @@ async def cb_hook_compare(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    # Сохраняем состояние
     await state.set_state("photo_battle_first")
     await state.update_data(user_id=user.id, is_pro=is_pro)
 
@@ -290,13 +277,48 @@ async def cb_hook_compare(callback: CallbackQuery, state: FSMContext):
 
 
 # ============================================================
-# ЗАГЛУШКИ E / F
+# ЭТАП E — «Выбрать лучшее фото» (FSM-запуск)
 # ============================================================
 @router.callback_query(F.data == "hook_best_photo")
-async def cb_hook_best_photo(callback: CallbackQuery):
-    await _handle_hook(callback, "best_photo")
+async def cb_hook_best_photo(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
+        return
+
+    from services.analysis.best_photo import _check_limit
+    allowed, is_pro = await _check_limit(user.id, callback.from_user.id)
+    if not allowed:
+        await callback.message.answer(
+            "🏆 <b>Выбрать лучшее фото</b>\n\n"
+            "Ты уже использовал бесплатный выбор на сегодня.\n\n"
+            "💎 <b>С Pro — безлимит.</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Pro", callback_data="pro_menu")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_main")],
+            ]),
+        )
+        return
+
+    await state.set_state("best_photo_1")
+    await state.update_data(user_id=user.id, is_pro=is_pro)
+
+    await callback.message.answer(
+        "🏆 <b>БИТВА ФОТО</b>\n\n"
+        "Отправь <b>три фото</b> — по одному.\n\n"
+        "<i>Можно отменить командой /cancel.</i>"
+    )
 
 
+# ============================================================
+# ЗАГЛУШКА F — AI-друг (пока не реализован)
+# ============================================================
 @router.callback_query(F.data == "hook_ai_friend")
 async def cb_hook_ai_friend(callback: CallbackQuery):
     await _handle_hook(callback, "ai_friend")

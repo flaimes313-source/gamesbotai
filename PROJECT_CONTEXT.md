@@ -2701,3 +2701,63 @@ ORDER BY clicks DESC;
 Reward-файлы: порядок user → claim_reward → grant_pro_days.
 Если claim не прошёл (уже получал) — grant НЕ вызывается.
 Это гарантирует, что PRO начислится ровно один раз.
+---
+
+## 33. ЭТАП D — «СРАВНЕНИЕ 2 ФОТО» (2026-10-09)
+
+### Кратко
+
+Юзер жмёт **⚔️ Сравнить 2 фото** → FSM → 2 фото → AI сравнивает → победитель + разбор.
+**Free:** 1/день (`RewardClaim photo_battle_YYYY-MM-DD`). **Pro:** безлимит + `why_winner` / `why_loser` / `best_for`.
+**Фолбэк:** AI упал → лимит Free **не тратится**.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/photo_battle.py` | `PHOTO_BATTLE_PROMPT` (JSON: score_1/2, winner, short_reason, why_winner, why_loser, best_for) |
+| `services/analysis/photo_battle.py` | `_check_limit`, `_mark_used`, `_collect_profile_data`, `generate_photo_battle_for_user`, `format_photo_battle` |
+| `bot/handlers/photo_battle.py` | FSM `photo_battle_first` → `photo_battle_second` + `/cancel` (StateFilter на состояния) |
+
+### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `services/ai/base.py` | + `generate_photo_battle(image_1_bytes, image_2_bytes, profile_data)` |
+| `services/ai/gigachat.py` | + реализация: 2 вложения в одном Vision-запросе (`GIGACHAT_VISION_MODEL`) |
+| `bot/handlers/vibe_hooks.py` | `hook_compare` → запуск FSM вместо заглушки |
+| `bot/handlers/analysis.py` | `handle_photo` → `@router.message(F.photo, StateFilter(None))` |
+| `bot/handlers/__init__.py` | `photo_battle.router` **выше** `analysis.router` |
+| `services/analytics/tracker.py` | + событие `photo_battle_viewed` |
+
+### ⚠️ Ключевое правило
+
+**FSM-хендлеры с фото регистрируются ВЫШЕ общих.** У `analysis.handle_photo` теперь `StateFilter(None)` — иначе он перехватывает фото из FSM. Новые FSM-сценарии с фото → регистрировать **до** `analysis.router`.
+
+### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `services/analysis/photo_battle.py` | `FREE_DAILY_LIMIT` | 1 |
+
+### Событие
+
+| Событие | Payload |
+|---|---|
+| `photo_battle_viewed` | `{is_pro, allowed, reason, winner}` |
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| Фото в FSM уходило в обычный анализ | `photo_battle.router` выше `analysis.router` + `StateFilter(None)` в `handle_photo` |
+| `/cancel` мог конфликтовать | `StateFilter("photo_battle_first", "photo_battle_second")` на `/cancel` |
+| Лимит тратился при ошибке AI | `_mark_used` только после успешного ответа AI |
+
+### Точка отката
+
+Заменить `hook_compare` в `vibe_hooks.py` на заглушку (или убрать кнопку из `first_analysis_kb`).
+
+### Что дальше
+
+**Этап E** — «Выбрать лучшее фото» (3 фото → победитель + разбивка по целям). Крючок `hook_best_photo` — пока заглушка.

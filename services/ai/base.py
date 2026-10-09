@@ -172,3 +172,39 @@ class AIProvider(ABC):
             }
         """
         ...
+
+    # --------------------------------------------------------
+    # «Выбрать лучшее фото» (Этап E)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_best_photo(
+        self,
+        image_1_bytes: bytes,
+        image_2_bytes: bytes,
+        image_3_bytes: bytes,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Сравнивает 3 фото и выбирает лучшее.
+
+        profile_data:
+            {
+                "user_name": str,
+                "archetype": str,
+            }
+
+        Возвращает:
+            {
+                "score_1": int,
+                "score_2": int,
+                "score_3": int,
+                "winner": int (1, 2 или 3),
+                "short_reason": str,
+                "why_winner": str,
+                "why_others": str,
+                "best_for_telegram": int (1-3),
+                "best_for_dating": int (1-3),
+                "best_for_business": int (1-3),
+            }
+        """
+        ...
