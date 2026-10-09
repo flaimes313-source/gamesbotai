@@ -2,6 +2,7 @@ import io
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
@@ -186,7 +187,7 @@ async def _mark_hooks_shown(user_id: int) -> None:
 # ============================================================
 # ОСНОВНОЙ ХЕНДЛЕР
 # ============================================================
-@router.message(F.photo)
+@router.message(F.photo, StateFilter(None))
 async def handle_photo(message: Message):
     telegram_id = message.from_user.id
 

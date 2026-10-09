@@ -39,12 +39,15 @@ def register_handlers(root_router: Router) -> None:
 
     # 2. Пользовательские
     root_router.include_router(start.router)
+
+    # ⚔️ FSM-хендлеры — ВЫШЕ общих, чтобы фото в состоянии ловились ими, а не analysis
+    root_router.include_router(photo_battle.router)
+
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
     root_router.include_router(vibe_report.router)
     root_router.include_router(compatibility.router)
-    root_router.include_router(vibe_hooks.router)              # ← 🎣 Крючки
-    root_router.include_router(photo_battle.router)            # ← ⚔️ Битва (FSM)
+    root_router.include_router(vibe_hooks.router)
     root_router.include_router(settings_notifications.router)
     root_router.include_router(timezone.router)
     root_router.include_router(engagement.router)
