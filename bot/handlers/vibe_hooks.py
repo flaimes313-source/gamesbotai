@@ -1,13 +1,15 @@
 """
-Крючки после анализа (Этап A + B + C).
+Крючки после анализа (Этап A + B + C + D).
 
-Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?» в share_kb.
-Этап B: «Какой ты сегодня?» — реальный вызов AI.
-Этап C: «Что обо мне думают?» — реальный вызов AI.
-Заглушки: D/E/F — «Скоро».
+Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?».
+Этап B: «Какой ты сегодня?» — AI.
+Этап C: «Что обо мне думают?» — AI.
+Этап D: «Сравнение 2 фото» — FSM.
+Заглушки: E, F — «Скоро».
 """
 
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
@@ -21,19 +23,9 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# ЗАГЛУШКИ D/E/F
+# ЗАГЛУШКИ E / F
 # ============================================================
 HOOK_TEXTS = {
-    "compare": {
-        "title": "⚔️ Сравнить 2 фото",
-        "text": (
-            "⚔️ <b>Сравнить 2 фото</b>\n\n"
-            "Отправь 2 фото — Вайбми устроит «битву вайбов».\n\n"
-            "Победитель получит титул 🔥\n"
-            "И ты узнаешь, почему одно фото работает сильнее.\n\n"
-            "🛠 <b>Скоро в Вайбми.</b>"
-        ),
-    },
     "best_photo": {
         "title": "🏆 Выбрать лучшее фото",
         "text": (
@@ -256,13 +248,50 @@ async def cb_hook_impression(callback: CallbackQuery):
 
 
 # ============================================================
-# ЗАГЛУШКИ D/E/F
+# ЭТАП D — «Сравнение 2 фото» (FSM-запуск)
 # ============================================================
 @router.callback_query(F.data == "hook_compare")
-async def cb_hook_compare(callback: CallbackQuery):
-    await _handle_hook(callback, "compare")
+async def cb_hook_compare(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
+        return
+
+    # Проверка лимита + сразу сохраняем user_id
+    from services.analysis.photo_battle import _check_limit
+    allowed, is_pro = await _check_limit(user.id, callback.from_user.id)
+    if not allowed:
+        await callback.message.answer(
+            "⚔️ <b>Сравнение 2 фото</b>\n\n"
+            "Ты уже использовал бесплатное сравнение на сегодня.\n\n"
+            "💎 <b>С Pro — безлимит.</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Pro", callback_data="pro_menu")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_main")],
+            ]),
+        )
+        return
+
+    # Сохраняем состояние
+    await state.set_state("photo_battle_first")
+    await state.update_data(user_id=user.id, is_pro=is_pro)
+
+    await callback.message.answer(
+        "⚔️ <b>БИТВА ВАЙБОВ</b>\n\n"
+        "Отправь <b>первое фото</b> — а потом второе.\n\n"
+        "<i>Можно отменить командой /cancel.</i>"
+    )
 
 
+# ============================================================
+# ЗАГЛУШКИ E / F
+# ============================================================
 @router.callback_query(F.data == "hook_best_photo")
 async def cb_hook_best_photo(callback: CallbackQuery):
     await _handle_hook(callback, "best_photo")

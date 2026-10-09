@@ -80,6 +80,9 @@ EVENT_NAMES = {
     # Этап C — «Что обо мне думают?»
     "first_impression_viewed",
 
+    # Этап D — «Сравнение 2 фото»
+    "photo_battle_viewed",
+
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
 }

@@ -8,6 +8,7 @@ from bot.handlers import (
     compatibility,
     settings_notifications,
     vibe_hooks,
+    photo_battle,
     matching,
     compare,
     tests,
@@ -43,6 +44,7 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(vibe_report.router)
     root_router.include_router(compatibility.router)
     root_router.include_router(vibe_hooks.router)              # ← 🎣 Крючки
+    root_router.include_router(photo_battle.router)            # ← ⚔️ Битва (FSM)
     root_router.include_router(settings_notifications.router)
     root_router.include_router(timezone.router)
     root_router.include_router(engagement.router)

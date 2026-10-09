@@ -16,6 +16,7 @@ from prompts.horoscope import HOROSCOPE_PROMPT
 from prompts.match_description import MATCH_DESCRIPTION_PROMPT
 from prompts.message_helper import MESSAGE_HELPER_PROMPT
 from prompts.photo_analysis import PHOTO_ANALYSIS_PROMPT
+from prompts.photo_battle import PHOTO_BATTLE_PROMPT
 from prompts.test_question import TEST_QUESTION_PROMPT
 from prompts.test_result import TEST_RESULT_PROMPT
 from prompts.today_vibe import TODAY_VIBE_PROMPT
@@ -29,9 +30,9 @@ logger = get_logger(__name__)
 # ============================================================
 # Таймауты
 # ============================================================
-DEFAULT_CHAT_TIMEOUT = 20.0       # секунд на один запрос
-VISION_CHAT_TIMEOUT = 30.0        # для Vision — чуть больше
-RETRY_PAUSE_SECONDS = 2.0         # пауза между попытками
+DEFAULT_CHAT_TIMEOUT = 20.0
+VISION_CHAT_TIMEOUT = 30.0
+RETRY_PAUSE_SECONDS = 2.0
 
 
 # ============================================================
@@ -140,9 +141,6 @@ class GigaChatProvider(AIProvider):
             f"vision_model={config.GIGACHAT_VISION_MODEL}"
         )
 
-    # --------------------------------------------------------
-    # Низкоуровневый вызов с timeout
-    # --------------------------------------------------------
     async def _chat(
         self,
         messages: List[Messages],
@@ -185,12 +183,6 @@ class GigaChatProvider(AIProvider):
         log_tag: str = "JSON",
         timeout: float = DEFAULT_CHAT_TIMEOUT,
     ) -> Dict[str, Any]:
-        """
-        Две попытки:
-        1. temp=temperature_first
-        2. пауза RETRY_PAUSE_SECONDS, temp=temperature_retry
-        """
-        # Попытка 1
         try:
             raw = await self._chat(
                 messages,
@@ -208,7 +200,6 @@ class GigaChatProvider(AIProvider):
 
         await asyncio.sleep(RETRY_PAUSE_SECONDS)
 
-        # Попытка 2
         raw = await self._chat(
             messages,
             temperature=temperature_retry,
@@ -218,16 +209,10 @@ class GigaChatProvider(AIProvider):
         )
         return _extract_json(raw)
 
-    # --------------------------------------------------------
-    # Анализ фото (Vision)
-    # --------------------------------------------------------
-    async def analyze_photo(
-        self,
-        image_bytes: bytes,
-        prompt_override: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    async def _upload_image(self, image_bytes: bytes, filename_prefix: str = "photo") -> Any:
+        """Загружает фото и возвращает file_obj."""
         mime, ext = _detect_image_mime(image_bytes)
-        filename = f"photo.{ext}"
+        filename = f"{filename_prefix}.{ext}"
 
         def _upload() -> Any:
             buf = io.BytesIO(image_bytes)
@@ -243,10 +228,18 @@ class GigaChatProvider(AIProvider):
             logger.warning("[VISION] Upload timeout")
             raise TimeoutError("GigaChat upload timeout")
 
-        logger.info(
-            f"Uploaded photo to GigaChat ({mime}, {len(image_bytes)} bytes), "
-            f"file_id={file_obj.id_}"
-        )
+        logger.info(f"Uploaded {filename} ({mime}, {len(image_bytes)} bytes), id={file_obj.id_}")
+        return file_obj
+
+    # --------------------------------------------------------
+    # Анализ фото (Vision)
+    # --------------------------------------------------------
+    async def analyze_photo(
+        self,
+        image_bytes: bytes,
+        prompt_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        file_obj = await self._upload_image(image_bytes, "photo")
         prompt_text = prompt_override or PHOTO_ANALYSIS_PROMPT
 
         messages = [
@@ -598,9 +591,6 @@ class GigaChatProvider(AIProvider):
             log_tag="TODAY_VIBE",
         )
 
-    # --------------------------------------------------------
-    # «Что обо мне думают?» (Этап C)
-    # --------------------------------------------------------
     async def generate_first_impression(
         self,
         profile_data: Dict[str, Any],
@@ -624,3 +614,46 @@ class GigaChatProvider(AIProvider):
             max_tokens=800,
             log_tag="FIRST_IMPRESSION",
         )
+
+    # --------------------------------------------------------
+    # Сравнение 2 фото (Этап D)
+    # --------------------------------------------------------
+    async def generate_photo_battle(
+        self,
+        image_1_bytes: bytes,
+        image_2_bytes: bytes,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # Загружаем оба фото
+        file_1 = await self._upload_image(image_1_bytes, "photo_1")
+        file_2 = await self._upload_image(image_2_bytes, "photo_2")
+
+        prompt = PHOTO_BATTLE_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+        )
+
+        messages = [
+            Messages(role=MessagesRole.SYSTEM, content=prompt),
+            Messages(
+                role=MessagesRole.USER,
+                content=(
+                    "Сравни два фото. Первое — первое вложение, "
+                    "второе — второе вложение. Верни JSON."
+                ),
+                attachments=[file_1.id_, file_2.id_],
+            ),
+        ]
+
+        vision_model = config.GIGACHAT_VISION_MODEL
+        logger.info(f"[PHOTO_BATTLE] Analyzing with {vision_model}")
+
+        raw = await self._chat(
+            messages,
+            temperature=0.9,
+            max_tokens=900,
+            model=vision_model,
+            timeout=VISION_CHAT_TIMEOUT,
+        )
+        logger.info(f"[PHOTO_BATTLE] raw: {raw[:300]}")
+        return _extract_json(raw)

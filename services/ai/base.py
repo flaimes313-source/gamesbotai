@@ -127,18 +127,48 @@ class AIProvider(ABC):
         profile_data: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Первое впечатление о юзере.
-
         Возвращает:
             {
                 "main_text": str,
                 "confidence": int,
                 "interest": int,
                 "openness": int,
-                "hidden_trait": str,       # интрига для Free
-                "first_notice": str,       # раскрытие для Pro
-                "how_seen": str,           # для Pro
-                "improve": str,            # для Pro
+                "hidden_trait": str,
+                "first_notice": str,
+                "how_seen": str,
+                "improve": str,
+            }
+        """
+        ...
+
+    # --------------------------------------------------------
+    # «Сравнение 2 фото» (Этап D)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_photo_battle(
+        self,
+        image_1_bytes: bytes,
+        image_2_bytes: bytes,
+        profile_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Сравнивает 2 фото.
+
+        profile_data:
+            {
+                "user_name": str,
+                "archetype": str,
+            }
+
+        Возвращает:
+            {
+                "score_1": int,
+                "score_2": int,
+                "winner": int (1 или 2),
+                "short_reason": str,
+                "why_winner": str,
+                "why_loser": str,
+                "best_for": str,
             }
         """
         ...
