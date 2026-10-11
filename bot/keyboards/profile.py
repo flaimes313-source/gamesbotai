@@ -4,6 +4,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 def profile_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            # 🎨 Vibe-профиль — во всю ширину, первым
+            [
+                InlineKeyboardButton(text="🎨 Vibe-профиль", callback_data="vibe_profile"),
+            ],
+            # Дальше сетка 2×N
             [
                 InlineKeyboardButton(text="🔄 Новый анализ", callback_data="new_analysis"),
                 InlineKeyboardButton(text="📈 Моя динамика", callback_data="my_dynamics"),

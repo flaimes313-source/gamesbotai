@@ -189,6 +189,40 @@ def cancel_kb() -> InlineKeyboardMarkup:
     )
 
 
+def vibe_profile_kb() -> InlineKeyboardMarkup:
+    """Клавиатура под Vibe-профилем (Этап G)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📸 Новый анализ",
+                    callback_data="new_analysis",
+                ),
+                InlineKeyboardButton(
+                    text="📈 Динамика",
+                    callback_data="my_dynamics",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Статистика",
+                    callback_data="my_stats",
+                ),
+                InlineKeyboardButton(
+                    text="📤 Поделиться",
+                    callback_data="share_profile",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ В профиль",
+                    callback_data="my_profile",
+                ),
+            ],
+        ]
+    )
+
+
 def first_analysis_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

@@ -4,6 +4,7 @@ from bot.handlers import (
     start,
     analysis,
     profile,
+    vibe_profile,
     vibe_report,
     compatibility,
     settings_notifications,
@@ -43,12 +44,13 @@ def register_handlers(root_router: Router) -> None:
     # 2. Пользовательские
     root_router.include_router(start.router)
 
-    # FSM-хендлеры — ВЫШЕ общих (StateFilter)
+    # FSM-хендлеры — ВЫШЕ общих
     root_router.include_router(photo_battle.router)
     root_router.include_router(best_photo.router)
 
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
+    root_router.include_router(vibe_profile.router)
     root_router.include_router(vibe_report.router)
     root_router.include_router(compatibility.router)
     root_router.include_router(vibe_hooks.router)
@@ -65,11 +67,7 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(game_opt_in.router)
     root_router.include_router(privacy.router)
     root_router.include_router(payments.router)
-
-    # ⚠️ Обязательные подписки — до catch-all, но после /start и обычных роутеров,
-    # чтобы middleware обязательных подписок не блокировал команды
     root_router.include_router(subscriptions.router)
-
     root_router.include_router(blocking.router)
     root_router.include_router(advertising.router)
 
