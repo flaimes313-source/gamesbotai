@@ -34,10 +34,11 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="💎 PRO"),
             ],
             [
+                KeyboardButton(text="🤖 AI-друг"),
                 KeyboardButton(text="ℹ️ О боте"),
-                KeyboardButton(text="⚙️ Настройки"),
             ],
             [
+                KeyboardButton(text="⚙️ Настройки"),
                 KeyboardButton(text="🆘 Поддержка"),
             ],
         ],

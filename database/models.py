@@ -280,7 +280,6 @@ class Payment(Base):
     payment_type: Mapped[str] = mapped_column(String(32), default="pro")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Информация о тарифе (заполняется webhook после успешной оплаты)
     months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     days_granted: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
@@ -328,7 +327,6 @@ class SubscriptionCampaign(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Soft delete: кампания скрыта из UI, но данные остаются в БД.
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -727,4 +725,31 @@ class Horoscope(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "date", name="uq_horoscope_user_date"),
+    )
+
+
+# ============================================================
+# ЭТАП F — ИСТОРИЯ AI-ДРУГА
+# ============================================================
+class AIFriendMessage(Base):
+    """
+    История переписки юзера с AI-другом.
+
+    Хранится 30 дней (чистится фоновым воркером db_cleanup).
+    В AI передаются последние 10 сообщений.
+    """
+    __tablename__ = "ai_friend_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(16))   # "user" | "assistant"
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
     )

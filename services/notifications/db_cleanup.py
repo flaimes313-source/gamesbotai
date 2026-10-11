@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, text
 
 from database.connection import async_session, engine
-from database.models import Event, Message, PhotoAnalysis
+from database.models import AIFriendMessage, Event, Message, PhotoAnalysis
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -14,12 +14,13 @@ logger = get_logger(__name__)
 EVENTS_RETENTION_DAYS = 30
 MESSAGES_RETENTION_DAYS = 90
 PHOTO_ANALYSES_RETENTION_DAYS = 90
+AI_FRIEND_RETENTION_DAYS = 30
 
 
 async def cleanup_db() -> None:
     """
-    Удаляет старые события, сообщения и анализы фото.
-    Запускается раз в сутки.
+    Удаляет старые события, сообщения, анализы фото
+    и историю AI-друга. Запускается раз в сутки.
 
     VACUUM выполняется в AUTOCOMMIT — отдельно от DELETE.
     """
@@ -27,10 +28,12 @@ async def cleanup_db() -> None:
     events_cutoff = now - timedelta(days=EVENTS_RETENTION_DAYS)
     messages_cutoff = now - timedelta(days=MESSAGES_RETENTION_DAYS)
     analyses_cutoff = now - timedelta(days=PHOTO_ANALYSES_RETENTION_DAYS)
+    ai_friend_cutoff = now - timedelta(days=AI_FRIEND_RETENTION_DAYS)
 
     events_deleted = 0
     messages_deleted = 0
     analyses_deleted = 0
+    ai_friend_deleted = 0
 
     # ============================================================
     # DELETE — в обычной транзакции
@@ -54,12 +57,19 @@ async def cleanup_db() -> None:
             )
             analyses_deleted = res.rowcount or 0
 
+            res = await session.execute(
+                delete(AIFriendMessage)
+                .where(AIFriendMessage.created_at < ai_friend_cutoff)
+            )
+            ai_friend_deleted = res.rowcount or 0
+
             await session.commit()
 
         logger.info(
             f"DB cleanup: events={events_deleted}, "
             f"messages={messages_deleted}, "
-            f"analyses={analyses_deleted}"
+            f"analyses={analyses_deleted}, "
+            f"ai_friend={ai_friend_deleted}"
         )
     except Exception:
         logger.exception("DB cleanup delete failed")
@@ -76,10 +86,9 @@ async def cleanup_db() -> None:
             await autocommit_conn.execute(text("VACUUM events"))
             await autocommit_conn.execute(text("VACUUM messages"))
             await autocommit_conn.execute(text("VACUUM photo_analyses"))
+            await autocommit_conn.execute(text("VACUUM ai_friend_messages"))
         logger.info("VACUUM completed")
     except Exception:
-        # Не критично: DELETE уже освободил место внутри БД.
-        # VACUUM нужен только чтобы вернуть место ОС.
         logger.warning("VACUUM failed (non-critical)")
 
 

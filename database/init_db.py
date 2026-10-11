@@ -115,6 +115,21 @@ MIGRATIONS = [
     # ============================================================
     "ALTER TABLE payments ADD COLUMN IF NOT EXISTS months INTEGER;",
     "ALTER TABLE payments ADD COLUMN IF NOT EXISTS days_granted INTEGER;",
+
+    # ============================================================
+    # Этап F — История AI-друга
+    # ============================================================
+    """
+    CREATE TABLE IF NOT EXISTS ai_friend_messages (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role VARCHAR(16) NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_ai_friend_messages_user_id ON ai_friend_messages (user_id);",
+    "CREATE INDEX IF NOT EXISTS ix_ai_friend_messages_created_at ON ai_friend_messages (created_at);",
 ]
 
 

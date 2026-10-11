@@ -1,12 +1,12 @@
 """
-Крючки после анализа (Этап A + B + C + D + E + F).
+Крючки после анализа (Этап A + B + C + D + E).
 
 Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?».
 Этап B: «Какой ты сегодня?» — AI.
 Этап C: «Что обо мне думают?» — AI.
 Этап D: «Сравнение 2 фото» — FSM.
 Этап E: «Выбрать лучшее фото» — FSM.
-Этап F: «AI-друг» — FSM-режим.
+Этап F: «AI-друг» — ловится в bot/handlers/ai_friend.py.
 """
 
 from aiogram import F, Router
@@ -250,78 +250,6 @@ async def cb_hook_best_photo(callback: CallbackQuery, state: FSMContext):
         "Отправь <b>три фото</b> — по одному.\n\n"
         "<i>Можно отменить командой /cancel.</i>"
     )
-
-
-# ============================================================
-# ЭТАП F — «AI-друг» (FSM-режим)
-# ============================================================
-@router.callback_query(F.data == "hook_ai_friend")
-async def cb_hook_ai_friend(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-
-    async with async_session() as session:
-        user = (await session.execute(
-            select(User).where(User.telegram_id == callback.from_user.id)
-        )).scalar_one_or_none()
-
-    if user is None:
-        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
-        return
-
-    from services.analysis.ai_friend import (
-        check_ai_friend_limit,
-        collect_profile_data,
-    )
-    allowed, is_pro, remaining = await check_ai_friend_limit(
-        user.id, callback.from_user.id
-    )
-    if not allowed:
-        await callback.message.answer(
-            "🤖 <b>AI-друг</b>\n\n"
-            "На сегодня сообщения закончились.\n\n"
-            "💎 <b>С Pro — безлимит.</b>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💎 Pro", callback_data="pro_menu")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_main")],
-            ]),
-        )
-        return
-
-    profile_data = await collect_profile_data(user.id)
-    if profile_data is None:
-        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
-        return
-
-    from prompts.ai_friend import AI_FRIEND_FIRST_MESSAGE
-    first_text = AI_FRIEND_FIRST_MESSAGE.format(
-        user_name=profile_data.get("user_name", "Игрок"),
-        archetype=profile_data.get("archetype", "загадочный тип"),
-    )
-
-    await state.set_state("ai_friend_active")
-    await state.update_data(user_id=user.id, history=[])
-
-    try:
-        await callback.message.answer(
-            first_text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="🚪 Выйти из чата",
-                    callback_data="ai_friend_exit",
-                )],
-            ]),
-        )
-    except Exception:
-        logger.exception("[AI_FRIEND] first message failed")
-
-    try:
-        await track(
-            "ai_friend_started",
-            telegram_id=callback.from_user.id,
-            payload={"is_pro": is_pro, "remaining": remaining},
-        )
-    except Exception:
-        logger.exception("[AI_FRIEND] track started failed")
 
 
 # ============================================================
