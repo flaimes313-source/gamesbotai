@@ -10,6 +10,7 @@ FSM-режим «AI-друг» (Этап F).
 - Callback hook_ai_friend (из крючков).
 
 Выход: /exit или inline-кнопка «🚪 Выйти».
+Дополнительно: 📜 История (просмотр), 🗑 Очистить историю.
 """
 
 from aiogram import F, Router
@@ -38,13 +39,19 @@ logger = get_logger(__name__)
 def _exit_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📜 История переписки",
+                    callback_data="ai_friend_history",
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Очистить историю",
+                    callback_data="ai_friend_clear",
+                ),
+            ],
             [InlineKeyboardButton(
                 text="🚪 Выйти из чата",
                 callback_data="ai_friend_exit",
-            )],
-            [InlineKeyboardButton(
-                text="🗑 Очистить историю",
-                callback_data="ai_friend_clear",
             )],
         ]
     )
@@ -60,6 +67,25 @@ def _clear_confirm_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(
                 text="⬅️ Отмена",
                 callback_data="ai_friend_clear_no",
+            )],
+        ]
+    )
+
+
+def _history_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data="ai_friend_history",
+            )],
+            [InlineKeyboardButton(
+                text="🗑 Очистить историю",
+                callback_data="ai_friend_clear",
+            )],
+            [InlineKeyboardButton(
+                text="🚪 Выйти из режима",
+                callback_data="ai_friend_exit",
             )],
         ]
     )
@@ -157,7 +183,7 @@ async def _start_ai_friend(
             f"🤖 <b>С возвращением, {profile_data.get('user_name', 'Игрок')}!</b>\n\n"
             f"Я помню нашу переписку ({history_count} сообщ.). "
             "Продолжаем?\n\n"
-            "<i>Команда /exit — выйти. Кнопка 🗑 — очистить историю.</i>"
+            "<i>Команда /exit — выйти. Кнопки 📜 / 🗑 — история.</i>"
         )
     else:
         first_text = AI_FRIEND_FIRST_MESSAGE.format(
@@ -220,6 +246,57 @@ async def cb_exit(callback: CallbackQuery, state: FSMContext):
         await track("ai_friend_exited", telegram_id=callback.from_user.id)
     except Exception:
         logger.exception("[AI_FRIEND] track exit failed")
+
+
+# ============================================================
+# ПРОСМОТР ИСТОРИИ
+# ============================================================
+@router.callback_query(F.data == "ai_friend_history")
+async def cb_history(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    data = await state.get_data()
+    user_id = data.get("user_id")
+
+    if not user_id:
+        async with async_session() as session:
+            user = (await session.execute(
+                select(User).where(User.telegram_id == callback.from_user.id)
+            )).scalar_one_or_none()
+        user_id = user.id if user else None
+
+    if not user_id:
+        await callback.message.answer("Сначала отправь фото.")
+        return
+
+    try:
+        from services.analysis.ai_friend import (
+            load_recent_messages,
+            format_history_for_view,
+        )
+        history_data = await load_recent_messages(user_id)
+        text = format_history_for_view(history_data)
+    except Exception:
+        logger.exception("[AI_FRIEND] history load failed")
+        await callback.message.answer("😔 Не удалось загрузить историю.")
+        return
+
+    try:
+        await callback.message.answer(text, reply_markup=_history_kb())
+    except Exception:
+        logger.exception("[AI_FRIEND] history send failed")
+
+    try:
+        await track(
+            "ai_friend_history_viewed",
+            telegram_id=callback.from_user.id,
+            payload={
+                "total": history_data.get("total", 0),
+                "shown": history_data.get("shown", 0),
+            },
+        )
+    except Exception:
+        pass
 
 
 # ============================================================

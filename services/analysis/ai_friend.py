@@ -30,6 +30,7 @@ FREE_DAILY_LIMIT = 3
 HISTORY_FOR_AI = 10        # сколько сообщений отдаём AI
 HISTORY_IN_DB_MAX = 50     # сколько храним на юзера
 RETENTION_DAYS = 30        # сколько дней храним всего
+HISTORY_FOR_VIEW = 20      # сколько показываем юзеру
 
 
 def _today_code() -> str:
@@ -84,7 +85,7 @@ async def check_ai_friend_limit(
 
 
 # ============================================================
-# ИСТОРИЯ
+# ИСТОРИЯ — для AI
 # ============================================================
 async def load_history(user_id: int, limit: int = HISTORY_FOR_AI) -> List[Dict[str, str]]:
     """Последние N сообщений из БД в формате для AI."""
@@ -101,6 +102,50 @@ async def load_history(user_id: int, limit: int = HISTORY_FOR_AI) -> List[Dict[s
     return [{"role": r.role, "text": r.text} for r in rows]
 
 
+# ============================================================
+# ИСТОРИЯ — для показа юзеру
+# ============================================================
+async def load_recent_messages(
+    user_id: int,
+    limit: int = HISTORY_FOR_VIEW,
+) -> Dict[str, Any]:
+    """
+    Возвращает:
+        {
+            "messages": [{"role": "user"|"assistant", "text": str}, ...],
+            "total": int,        # всего сообщений
+            "shown": int,        # показано
+        }
+
+    Порядок: старые → новые (сверху вниз).
+    """
+    async with async_session() as session:
+        total = (await session.execute(
+            select(func.count(AIFriendMessage.id))
+            .where(AIFriendMessage.user_id == user_id)
+        )).scalar_one()
+
+        rows = (await session.execute(
+            select(AIFriendMessage)
+            .where(AIFriendMessage.user_id == user_id)
+            .order_by(AIFriendMessage.id.desc())
+            .limit(limit)
+        )).scalars().all()
+
+    # Разворачиваем: старые → новые
+    rows = list(reversed(rows))
+    messages = [{"role": r.role, "text": r.text} for r in rows]
+
+    return {
+        "messages": messages,
+        "total": int(total or 0),
+        "shown": len(messages),
+    }
+
+
+# ============================================================
+# СОХРАНЕНИЕ / ОЧИСТКА
+# ============================================================
 async def save_message(user_id: int, role: str, text: str) -> None:
     """Сохраняет одно сообщение в историю."""
     if not text:
@@ -124,7 +169,6 @@ async def trim_history(user_id: int) -> None:
     """
     try:
         async with async_session() as session:
-            # Находим id порога — последние N
             rows = (await session.execute(
                 select(AIFriendMessage.id)
                 .where(AIFriendMessage.user_id == user_id)
@@ -282,3 +326,68 @@ async def generate_ai_friend_reply(
         "reply": reply,
         "remaining": remaining,
     }
+
+
+# ============================================================
+# ФОРМАТИРОВАНИЕ ИСТОРИИ ДЛЯ ПОКАЗА
+# ============================================================
+def format_history_for_view(history_data: Dict[str, Any]) -> str:
+    """
+    Собирает текст истории для показа в Telegram.
+    Возвращает готовый HTML-текст (до 4096 символов).
+    """
+    total = history_data.get("total", 0)
+    shown = history_data.get("shown", 0)
+    messages = history_data.get("messages", [])
+
+    if total == 0:
+        return (
+            "📜 <b>ИСТОРИЯ AI-ДРУГА</b>\n\n"
+            "<i>Пока пусто. Напиши что-нибудь — начнём.</i>"
+        )
+
+    # Экранируем HTML-спецсимволы в текстах
+    def esc(s: str) -> str:
+        return (
+            s.replace("&", "&amp;")
+             .replace("<", "&lt;")
+             .replace(">", "&gt;")
+        )
+
+    lines = [
+        "📜 <b>ИСТОРИЯ AI-ДРУГА</b>",
+        "",
+    ]
+
+    if total > shown:
+        lines.append(f"Всего сообщений: <b>{total}</b>")
+        lines.append(f"Показаны последние <b>{shown}</b>:")
+    else:
+        lines.append(f"Всего сообщений: <b>{total}</b>")
+
+    lines.append("")
+
+    for m in messages:
+        role = m.get("role")
+        text = esc((m.get("text") or "").strip())
+
+        # Обрезаем слишком длинные сообщения
+        if len(text) > 400:
+            text = text[:400] + "…"
+
+        if role == "user":
+            lines.append("👤 <b>Ты:</b>")
+            lines.append(text)
+        else:
+            lines.append("🤖 <b>AI:</b>")
+            lines.append(text)
+
+        lines.append("───────────────────")
+
+    result = "\n".join(lines)
+
+    # Telegram: 4096 символов
+    if len(result) > 4000:
+        result = result[:3990] + "\n…\n<i>(обрезано)</i>"
+
+    return result

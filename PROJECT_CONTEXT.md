@@ -2822,3 +2822,106 @@ Reward-файлы: порядок user → claim_reward → grant_pro_days.
 ### Что дальше
 
 **Этап F** — «AI-друг» (личный AI, знающий Vibe-профиль). Free: 3 сообщения, Pro: безлимит. Крючок `hook_ai_friend` — пока заглушка.
+---
+
+## 35. ЭТАП F — «AI-ДРУГ» (2026-10-11)
+
+### Кратко
+
+Личный AI-друг в главном меню (Reply-кнопка **🤖 AI-друг**).
+Знает Vibe-профиль юзера, помнит историю переписки (30 дней), отвечает
+в роли друга. **Free:** 3 сообщения/день, **Pro:** безлимит.
+Фолбэк: AI упал → лимит **не тратится**.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/ai_friend.py` | `AI_FRIEND_SYSTEM_PROMPT`, `AI_FRIEND_FIRST_MESSAGE` |
+| `services/analysis/ai_friend.py` | Лимит + история из БД + AI + сохранение + `format_history_for_view` |
+| `bot/handlers/ai_friend.py` | FSM `ai_friend_active` + просмотр/очистка истории + `/exit` |
+
+### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `database/models.py` | + таблица `AIFriendMessage` (id, user_id, role, text, created_at) |
+| `database/init_db.py` | + миграция `ai_friend_messages` + 2 индекса |
+| `services/ai/base.py` | + `generate_ai_friend_reply(profile_data, history, user_message)` |
+| `services/ai/gigachat.py` | + импорт `AI_FRIEND_SYSTEM_PROMPT`, + реализация |
+| `bot/keyboards/main.py` | + кнопка **🤖 AI-друг** в `main_menu_kb` |
+| `bot/handlers/vibe_hooks.py` | Удалён старый `hook_ai_friend` (переехал в `ai_friend.py`) |
+| `bot/handlers/__init__.py` | + `ai_friend.router` (после `vibe_hooks.router`) |
+| `services/analytics/tracker.py` | + `ai_friend_started`, `ai_friend_message`, `ai_friend_exited`, `ai_friend_history_viewed`, `ai_friend_cleared` |
+| `services/notifications/db_cleanup.py` | + очистка `ai_friend_messages` старше 30 дней |
+
+### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `services/analysis/ai_friend.py` | `FREE_DAILY_LIMIT` | 3 |
+| `services/analysis/ai_friend.py` | `HISTORY_FOR_AI` | 10 (отдаём AI) |
+| `services/analysis/ai_friend.py` | `HISTORY_IN_DB_MAX` | 50 (храним на юзера) |
+| `services/analysis/ai_friend.py` | `HISTORY_FOR_VIEW` | 20 (показываем юзеру) |
+| `services/analysis/ai_friend.py` | `RETENTION_DAYS` | 30 |
+| `services/notifications/db_cleanup.py` | `AI_FRIEND_RETENTION_DAYS` | 30 |
+
+### События
+
+| Событие | Payload |
+|---|---|
+| `ai_friend_started` | `{is_pro, remaining, history_count}` |
+| `ai_friend_message` | `{is_pro, remaining, msg_len}` |
+| `ai_friend_exited` | — |
+| `ai_friend_history_viewed` | `{total, shown}` |
+| `ai_friend_cleared` | `{deleted}` |
+
+### UI
+
+**Главное меню:** `🤖 AI-друг` (Reply-кнопка, между `💎 PRO` и `ℹ️ О боте`).
+
+**Кнопки под ответами AI:**
+```
+[📜 История переписки]  [🗑 Очистить историю]
+[🚪 Выйти из чата]
+```
+
+**История:** последние 20 сообщений, HTML-экранирование, обрезка длинных
+реплик до 400 симв., защита от 4096 (лимит Telegram).
+
+### ⚠️ Ключевое правило
+
+**`ai_friend.router` регистрируется ДО `messaging.router` и `support.router`**
+(это catch-all). Иначе текстовые сообщения уйдут туда, а не в AI-друга.
+Сейчас стоит после `vibe_hooks.router` — это правильно.
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| AI-друг «забывал» предыдущее | Сохранение в `ai_friend_messages` + передача последних 10 в AI |
+| Лимит тратился при ошибке AI | `_mark_used` вызывается только после успешного ответа |
+| Лимит Free — 3 сообщения / день | `RewardClaim` с уникальным кодом `ai_friend_YYYY-MM-DD_HHMMSSffffff` |
+| История разрослась | `trim_history` (после 50) + `db_cleanup` (старше 30 дней) |
+| `message.chat.id` вместо `telegram_id` | Передаём `telegram_id` параметром в `_start_ai_friend` |
+| `<`, `>`, `&` в текстах ломали HTML | `format_history_for_view` экранирует |
+| Длинная история > 4096 | Обрезка до 4000 симв. + пометка «обрезано» |
+| AI-друг нужен «всегда», не только после анализа | Reply-кнопка в `main_menu_kb` |
+
+### Точка отката
+
+- **Убрать кнопку:** удалить `🤖 AI-друг` из `main_menu_kb`.
+- **Отключить историю:** убрать `save_message`/`load_history` из `ai_friend.py`.
+- **Уменьшить лимит:** `FREE_DAILY_LIMIT` в `services/analysis/ai_friend.py`.
+
+### Что дальше
+
+**Этап G** — «Vibe-профиль» (единый экран: характеристики + история +
+динамика + совместимость в одном месте).
+
+### Что ещё в планах (после F)
+
+- 🥇 Взаимные лайки, дуэли вайбов, кланы.
+- 🥈 Вайб-магазин, автопродление PRO, пакеты/подарки.
+- 🥉 7 новых feature flags в `DEFAULTS`, точные `points_gained` за неделю.
+- Приватность: `/privacy`, `/delete_my_data`, автоудаление `telegram_file_id`.

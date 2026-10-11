@@ -88,6 +88,7 @@ EVENT_NAMES = {
 
     # Этап F — «AI-друг»
     "ai_friend_started", "ai_friend_message", "ai_friend_exited",
+    "ai_friend_history_viewed", "ai_friend_cleared",
 
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
