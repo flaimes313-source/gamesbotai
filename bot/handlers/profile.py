@@ -22,6 +22,7 @@ from services.engagement.points import (
     points_to_next_level,
     title_for_level,
 )
+from services.premium import is_premium
 from utils.logging import get_logger
 
 router = Router()
@@ -45,9 +46,16 @@ async def _latest_profile(telegram_id: int) -> tuple[User | None, Profile | None
         return user, profile
 
 
-def _profile_text(user: User, profile: Profile, engagement_line: str = "") -> str:
+def _profile_text(
+    user: User,
+    profile: Profile,
+    engagement_line: str = "",
+    is_pro: bool = False,
+) -> str:
+    header = "👑 <b>МОЙ ПРОФИЛЬ (PRO)</b>" if is_pro else "👤 <b>МОЙ ПРОФИЛЬ</b>"
+
     base = (
-        f"👤 <b>МОЙ ПРОФИЛЬ</b>\n\n"
+        f"{header}\n\n"
         f"🧨 <b>{profile.archetype}</b>\n\n"
         f"Харизма {profile.charisma}\n"
         f"Уверенность {profile.confidence}\n"
@@ -104,10 +112,6 @@ async def _send_share_link(bot, telegram_id: int, message_or_callback) -> None:
 # ОБЩАЯ ФУНКЦИЯ ПОКАЗА ПРОФИЛЯ
 # ============================================================
 async def _render_and_send_profile(target) -> None:
-    """
-    Показывает профиль. target — Message или CallbackQuery.
-    Используется и для текстовой кнопки, и для callback my_profile.
-    """
     if isinstance(target, CallbackQuery):
         telegram_id = target.from_user.id
         send = target.message.answer
@@ -122,7 +126,12 @@ async def _render_and_send_profile(target) -> None:
         )
         return
 
-    # Engagement
+    is_pro = False
+    try:
+        is_pro = await is_premium(telegram_id)
+    except Exception:
+        logger.exception("is_premium check failed")
+
     engagement_line = ""
     try:
         eng = await get_engagement(user.id)
@@ -142,7 +151,7 @@ async def _render_and_send_profile(target) -> None:
         logger.exception("Engagement fetch failed")
 
     await send(
-        _profile_text(user, profile, engagement_line),
+        _profile_text(user, profile, engagement_line, is_pro=is_pro),
         reply_markup=profile_kb(),
     )
 
@@ -150,7 +159,7 @@ async def _render_and_send_profile(target) -> None:
 # ============================================================
 # REPLY-КНОПКИ
 # ============================================================
-@router.message(F.text == "👤 Мой профиль")
+@router.message(F.text.in_(["👤 Мой профиль", "👑 Мой профиль (PRO)"]))
 async def show_profile(message: Message):
     await _render_and_send_profile(message)
 
@@ -213,7 +222,6 @@ async def cb_my_dynamics(callback: CallbackQuery):
 
     await callback.message.answer(text)
 
-    # === График ===
     try:
         await _send_dynamics_chart(callback, dyn)
     except Exception:
@@ -221,7 +229,6 @@ async def cb_my_dynamics(callback: CallbackQuery):
 
 
 async def _send_dynamics_chart(callback: CallbackQuery, dyn: dict):
-    """Рисует и отправляет график по характеристике с наибольшим изменением."""
     top = get_biggest_changes(dyn, top=1)
     if not top:
         return
@@ -251,7 +258,6 @@ async def _send_dynamics_chart(callback: CallbackQuery, dyn: dict):
 
 
 def _render_dynamics_text(dyn: dict) -> str:
-    """Собирает текст экрана динамики."""
     count = dyn.get("count", 0)
     period = dyn.get("period") or {}
     period_str = format_period(period.get("first"), period.get("last"))
@@ -304,7 +310,6 @@ def _render_dynamics_text(dyn: dict) -> str:
 # ============================================================
 @router.callback_query(F.data == "my_profile")
 async def cb_my_profile(callback: CallbackQuery):
-    """Возврат в профиль из отчёта."""
     await callback.answer()
     await _render_and_send_profile(callback)
 
@@ -327,13 +332,15 @@ async def cb_settings(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_main")
 async def cb_back_to_main(callback: CallbackQuery):
-    """
-    Возврат в главное меню.
-    ВАЖНО: если сообщение — фото (карточка), edit_text упадёт.
-    Поэтому просто отправляем НОВОЕ сообщение с главным меню.
-    """
     await callback.answer()
+
+    is_pro = False
+    try:
+        is_pro = await is_premium(callback.from_user.id)
+    except Exception:
+        logger.exception("is_premium check failed")
+
     await callback.message.answer(
         "🏠 Главное меню. Отправь фото или выбери пункт меню.",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(is_pro=is_pro),
     )

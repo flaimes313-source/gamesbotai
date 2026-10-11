@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
-from bot.keyboards.main import pro_menu_kb
+from bot.keyboards.main import main_menu_kb, pro_menu_kb
 from database.connection import async_session
 from database.models import Payment as PaymentModel, Promocode, User
 from services.achievements import unlock_achievement
@@ -126,7 +128,6 @@ async def cb_buy_pro(callback: CallbackQuery):
         await callback.message.answer("Сначала отправь фото.")
         return
 
-    # Получаем username бота для return_url
     try:
         bot_me = await callback.bot.get_me()
         bot_username = bot_me.username
@@ -184,19 +185,39 @@ async def cb_gift_pro(callback: CallbackQuery):
 
 
 # ============================================================
-# ПРОМОКОДЫ
+# ПРОМОКОДЫ — вход в FSM
 # ============================================================
 @router.callback_query(F.data == "enter_promo")
-async def cb_enter_promo(callback: CallbackQuery):
+async def cb_enter_promo(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+
+    await state.set_state("waiting_promo")
+
     await callback.message.answer(
-        "🎟 Отправь промокод одним сообщением (например, <code>START50</code>)."
+        "🎟 <b>Ввод промокода</b>\n\n"
+        "Отправь промокод одним сообщением.\n"
+        "Например: <code>START50</code>\n\n"
+        "<i>Чтобы отменить — /cancel</i>"
     )
 
 
-@router.message(F.text.regexp(r"^[A-Z0-9]{4,32}$"))
-async def handle_promo(message: Message):
-    code = message.text.strip().upper()
+# ============================================================
+# ПРОМОКОДЫ — приём кода (только в FSM)
+# ============================================================
+@router.message(StateFilter("waiting_promo"), F.text)
+async def handle_promo(message: Message, state: FSMContext):
+    code = (message.text or "").strip().upper()
+
+    # Выходим из FSM в любом случае
+    await state.clear()
+
+    # Простая валидация формата
+    if not code.isalnum() or not (4 <= len(code) <= 32):
+        await message.answer(
+            "❌ Неверный формат промокода.\n\n"
+            "Промокод — это 4-32 символа (буквы и цифры)."
+        )
+        return
 
     async with async_session() as session:
         promo = (await session.execute(
@@ -204,6 +225,7 @@ async def handle_promo(message: Message):
         )).scalar_one_or_none()
 
         if not promo or not promo.is_active:
+            await message.answer("❌ Промокод не найден или неактивен.")
             return
 
         if promo.max_uses and promo.used_count >= promo.max_uses:
@@ -244,3 +266,21 @@ async def handle_promo(message: Message):
         f"Активирован на <b>{days} дней</b>.\n"
         f"Действует до: <b>{premium_until.strftime('%d.%m.%Y')}</b>"
     )
+
+    # Обновляем клавиатуру — теперь «👑 Мой профиль (PRO)»
+    try:
+        await message.answer(
+            "👑 <b>Меню обновлено!</b>",
+            reply_markup=main_menu_kb(is_pro=True),
+        )
+    except Exception:
+        logger.exception("Failed to refresh main menu after promo")
+
+
+# ============================================================
+# /cancel — выход из FSM промокода
+# ============================================================
+@router.message(StateFilter("waiting_promo"), F.text == "/cancel")
+async def cancel_promo(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Ввод промокода отменён.")

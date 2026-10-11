@@ -17,6 +17,7 @@ from database.models import PhotoAnalysis, Profile, User
 from services.analytics.tracker import track
 from services.cards.generator import generate_card
 from services.feature_flags import is_enabled
+from services.premium import is_premium
 from utils.logging import get_logger
 
 router = Router()
@@ -231,7 +232,13 @@ async def cmd_start(message: Message):
         "Ну что, какой ты? 👀"
     )
 
-    await message.answer(text, reply_markup=main_menu_kb())
+    is_pro = False
+    try:
+        is_pro = await is_premium(message.from_user.id)
+    except Exception:
+        logger.exception("is_premium check failed")
+
+    await message.answer(text, reply_markup=main_menu_kb(is_pro=is_pro))
 
     # 🎁 Карма дня — раз в день, отдельным сообщением
     try:
@@ -262,7 +269,7 @@ async def cmd_help(message: Message):
         "🔥 <b>Вайбми — узнай свой вайб</b>\n\n"
         "1️⃣ <b>Отправь фото</b> — получишь игровой AI-профиль.\n\n"
         "2️⃣ <b>Поделись результатом</b> — «📤 Поделиться».\n\n"
-        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков»: 7 режимов.\n\n"
+        "3️⃣ <b>Найди игроков</b> — «🎯 Найти игроков».\n\n"
         "4️⃣ <b>Пройди тесты</b> — «🧪 Пройти тест».\n\n"
         "5️⃣ <b>Сравни с другом</b> — «👥 Сравнить».\n\n"
         "6️⃣ <b>Собери достижения</b> — «🏆 Достижения».\n\n"
@@ -296,13 +303,17 @@ async def cb_send_photo(callback: CallbackQuery):
     await callback.message.answer("📸 Просто отправь фото в чат!")
 
 
-@router.callback_query(F.data == "back_to_main")
-async def cb_back_to_main(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("🏠 Главное меню", reply_markup=main_menu_kb())
-
-
 @router.callback_query(F.data == "cancel_action")
 async def cb_cancel(callback: CallbackQuery):
     await callback.answer("Отменено")
-    await callback.message.answer("Действие отменено.", reply_markup=main_menu_kb())
+
+    is_pro = False
+    try:
+        is_pro = await is_premium(callback.from_user.id)
+    except Exception:
+        logger.exception("is_premium check failed")
+
+    await callback.message.answer(
+        "Действие отменено.",
+        reply_markup=main_menu_kb(is_pro=is_pro),
+    )

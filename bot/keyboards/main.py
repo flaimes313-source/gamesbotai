@@ -6,17 +6,11 @@ from aiogram.types import (
 )
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(is_pro: bool = False) -> ReplyKeyboardMarkup:
+    profile_label = "👑 Мой профиль (PRO)" if is_pro else "👤 Мой профиль"
+
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(text="👤 Мой профиль"),
-                KeyboardButton(text="🎯 Найти игроков"),
-            ],
-            [
-                KeyboardButton(text="👥 Сравнить"),
-                KeyboardButton(text="💬 Мои чаты"),
-            ],
             [
                 KeyboardButton(text="🎮 Социальная игра"),
                 KeyboardButton(text="🏆 Достижения"),
@@ -27,19 +21,18 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="🧭 Квесты"),
-                KeyboardButton(text="📊 Моя статистика"),
-            ],
-            [
                 KeyboardButton(text="🏆 Топы"),
+            ],
+            [
                 KeyboardButton(text="💎 PRO"),
-            ],
-            [
                 KeyboardButton(text="🤖 AI-друг"),
-                KeyboardButton(text="ℹ️ О боте"),
             ],
             [
+                KeyboardButton(text=profile_label),
                 KeyboardButton(text="⚙️ Настройки"),
-                KeyboardButton(text="🆘 Поддержка"),
+            ],
+            [
+                KeyboardButton(text="ℹ️ О боте"),
             ],
         ],
         resize_keyboard=True,
@@ -57,10 +50,6 @@ def send_photo_kb() -> InlineKeyboardMarkup:
 
 
 def share_kb(share_url: str = "") -> InlineKeyboardMarkup:
-    """
-    Клавиатура под карточкой анализа.
-    Кнопка «🔥 Что ещё?» ведёт в меню крючков.
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -103,8 +92,24 @@ def settings_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🌍 Часовой пояс", callback_data="tz_menu")],
             [InlineKeyboardButton(text="🎮 Социальная игра", callback_data="game_menu")],
             [InlineKeyboardButton(text="💎 PRO", callback_data="pro_menu")],
+            [InlineKeyboardButton(text="🗑 Удалить данные", callback_data="delete_data_menu")],
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support_menu")],
             [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
+        ]
+    )
+
+
+def delete_data_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🗑 Да, удалить всё",
+                callback_data="delete_data_yes",
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Отмена",
+                callback_data="delete_data_no",
+            )],
         ]
     )
 
@@ -179,9 +184,6 @@ def cancel_kb() -> InlineKeyboardMarkup:
 
 
 def first_analysis_kb() -> InlineKeyboardMarkup:
-    """
-    Клавиатура крючков (после первого анализа + раз в 3 дня).
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(

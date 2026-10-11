@@ -90,6 +90,9 @@ EVENT_NAMES = {
     "ai_friend_started", "ai_friend_message", "ai_friend_exited",
     "ai_friend_history_viewed", "ai_friend_cleared",
 
+    # Приватность / удаление данных
+    "account_data_deleted", "account_delete_cancelled",
+
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
 }
