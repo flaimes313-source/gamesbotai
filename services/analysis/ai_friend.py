@@ -27,10 +27,10 @@ logger = get_logger(__name__)
 
 
 FREE_DAILY_LIMIT = 3
-HISTORY_FOR_AI = 10        # сколько сообщений отдаём AI
-HISTORY_IN_DB_MAX = 50     # сколько храним на юзера
-RETENTION_DAYS = 30        # сколько дней храним всего
-HISTORY_FOR_VIEW = 20      # сколько показываем юзеру
+HISTORY_FOR_AI = 10
+HISTORY_IN_DB_MAX = 50
+RETENTION_DAYS = 30
+HISTORY_FOR_VIEW = 20
 
 
 def _today_code() -> str:
@@ -71,10 +71,7 @@ async def check_ai_friend_limit(
     user_id: int,
     telegram_id: int,
 ) -> tuple[bool, bool, int]:
-    """
-    Возвращает (allowed, is_pro, remaining).
-    remaining = -1 для Pro.
-    """
+    """Возвращает (allowed, is_pro, remaining). remaining = -1 для Pro."""
     is_pro = await is_premium(telegram_id)
     if is_pro:
         return True, True, -1
@@ -88,7 +85,6 @@ async def check_ai_friend_limit(
 # ИСТОРИЯ — для AI
 # ============================================================
 async def load_history(user_id: int, limit: int = HISTORY_FOR_AI) -> List[Dict[str, str]]:
-    """Последние N сообщений из БД в формате для AI."""
     async with async_session() as session:
         rows = (await session.execute(
             select(AIFriendMessage)
@@ -97,7 +93,6 @@ async def load_history(user_id: int, limit: int = HISTORY_FOR_AI) -> List[Dict[s
             .limit(limit)
         )).scalars().all()
 
-    # Разворачиваем: старые → новые
     rows = list(reversed(rows))
     return [{"role": r.role, "text": r.text} for r in rows]
 
@@ -109,16 +104,6 @@ async def load_recent_messages(
     user_id: int,
     limit: int = HISTORY_FOR_VIEW,
 ) -> Dict[str, Any]:
-    """
-    Возвращает:
-        {
-            "messages": [{"role": "user"|"assistant", "text": str}, ...],
-            "total": int,        # всего сообщений
-            "shown": int,        # показано
-        }
-
-    Порядок: старые → новые (сверху вниз).
-    """
     async with async_session() as session:
         total = (await session.execute(
             select(func.count(AIFriendMessage.id))
@@ -132,7 +117,6 @@ async def load_recent_messages(
             .limit(limit)
         )).scalars().all()
 
-    # Разворачиваем: старые → новые
     rows = list(reversed(rows))
     messages = [{"role": r.role, "text": r.text} for r in rows]
 
@@ -147,7 +131,6 @@ async def load_recent_messages(
 # СОХРАНЕНИЕ / ОЧИСТКА
 # ============================================================
 async def save_message(user_id: int, role: str, text: str) -> None:
-    """Сохраняет одно сообщение в историю."""
     if not text:
         return
     try:
@@ -155,7 +138,7 @@ async def save_message(user_id: int, role: str, text: str) -> None:
             session.add(AIFriendMessage(
                 user_id=user_id,
                 role=role,
-                text=text[:4000],   # защита от полотен
+                text=text[:4000],
             ))
             await session.commit()
     except Exception:
@@ -163,10 +146,6 @@ async def save_message(user_id: int, role: str, text: str) -> None:
 
 
 async def trim_history(user_id: int) -> None:
-    """
-    Оставляет только последние HISTORY_IN_DB_MAX сообщений.
-    Остальные — удаляет.
-    """
     try:
         async with async_session() as session:
             rows = (await session.execute(
@@ -179,7 +158,7 @@ async def trim_history(user_id: int) -> None:
             if len(rows) < HISTORY_IN_DB_MAX:
                 return
 
-            threshold_id = rows[-1]  # самый старый из «оставляемых»
+            threshold_id = rows[-1]
 
             await session.execute(
                 delete(AIFriendMessage)
@@ -192,7 +171,6 @@ async def trim_history(user_id: int) -> None:
 
 
 async def clear_history(user_id: int) -> int:
-    """Полная очистка истории юзера. Возвращает кол-во удалённых."""
     try:
         async with async_session() as session:
             res = await session.execute(
@@ -310,7 +288,6 @@ async def generate_ai_friend_reply(
             "remaining": remaining,
         }
 
-    # Сохраняем в БД только после успешного ответа
     await save_message(user_id, "user", user_message)
     await save_message(user_id, "assistant", reply)
     await trim_history(user_id)
@@ -332,10 +309,6 @@ async def generate_ai_friend_reply(
 # ФОРМАТИРОВАНИЕ ИСТОРИИ ДЛЯ ПОКАЗА
 # ============================================================
 def format_history_for_view(history_data: Dict[str, Any]) -> str:
-    """
-    Собирает текст истории для показа в Telegram.
-    Возвращает готовый HTML-текст (до 4096 символов).
-    """
     total = history_data.get("total", 0)
     shown = history_data.get("shown", 0)
     messages = history_data.get("messages", [])
@@ -346,7 +319,6 @@ def format_history_for_view(history_data: Dict[str, Any]) -> str:
             "<i>Пока пусто. Напиши что-нибудь — начнём.</i>"
         )
 
-    # Экранируем HTML-спецсимволы в текстах
     def esc(s: str) -> str:
         return (
             s.replace("&", "&amp;")
@@ -371,7 +343,6 @@ def format_history_for_view(history_data: Dict[str, Any]) -> str:
         role = m.get("role")
         text = esc((m.get("text") or "").strip())
 
-        # Обрезаем слишком длинные сообщения
         if len(text) > 400:
             text = text[:400] + "…"
 
@@ -386,7 +357,6 @@ def format_history_for_view(history_data: Dict[str, Any]) -> str:
 
     result = "\n".join(lines)
 
-    # Telegram: 4096 символов
     if len(result) > 4000:
         result = result[:3990] + "\n…\n<i>(обрезано)</i>"
 

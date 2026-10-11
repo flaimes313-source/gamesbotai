@@ -34,6 +34,8 @@ logger = get_logger(__name__)
 # ============================================================
 DEFAULT_CHAT_TIMEOUT = 20.0
 VISION_CHAT_TIMEOUT = 30.0
+AI_FRIEND_TIMEOUT = 40.0          # ← увеличен для AI-друга
+AI_FRIEND_RETRY_TIMEOUT = 40.0    # ← увеличен для retry
 RETRY_PAUSE_SECONDS = 2.0
 
 
@@ -747,16 +749,40 @@ class GigaChatProvider(AIProvider):
             Messages(role=MessagesRole.USER, content=user_message),
         ]
 
-        raw = await self._chat(
-            messages,
-            temperature=0.9,
-            max_tokens=350,
-            timeout=DEFAULT_CHAT_TIMEOUT,
-        )
+        # Попытка 1: обычная
+        try:
+            raw = await self._chat(
+                messages,
+                temperature=0.9,
+                max_tokens=350,
+                timeout=AI_FRIEND_TIMEOUT,
+            )
+            text = (raw or "").strip()
+            text = re.sub(r"^```[a-z]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            logger.info(f"[AI_FRIEND] attempt 1 ok, len={len(text)}")
+            return text.strip()
+        except Exception as e1:
+            logger.warning(
+                f"[AI_FRIEND] attempt 1 failed: {e1}. "
+                f"Retry in {RETRY_PAUSE_SECONDS}s with temp=0.5…"
+            )
 
-        text = (raw or "").strip()
-        text = re.sub(r"^```[a-z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        text = text.strip()
-        logger.info(f"[AI_FRIEND] raw len={len(text)}")
-        return text
+        # Попытка 2: с пониженной температурой и меньшим лимитом
+        await asyncio.sleep(RETRY_PAUSE_SECONDS)
+
+        try:
+            raw = await self._chat(
+                messages,
+                temperature=0.5,
+                max_tokens=250,
+                timeout=AI_FRIEND_RETRY_TIMEOUT,
+            )
+            text = (raw or "").strip()
+            text = re.sub(r"^```[a-z]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            logger.info(f"[AI_FRIEND] attempt 2 ok, len={len(text)}")
+            return text.strip()
+        except Exception as e2:
+            logger.error(f"[AI_FRIEND] attempt 2 failed: {e2}")
+            raise

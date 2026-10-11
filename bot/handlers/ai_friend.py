@@ -7,7 +7,7 @@ FSM-режим «AI-друг» (Этап F).
 
 Вход:
 - Reply-кнопка «🤖 AI-друг» (главное меню).
-- Callback hook_ai_friend (из крючков).
+- Callback hook_ai_friend (из крючков, из «О боте»).
 
 Выход: /exit или inline-кнопка «🚪 Выйти».
 Дополнительно: 📜 История (просмотр), 🗑 Очистить историю.
@@ -114,7 +114,7 @@ async def btn_ai_friend(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ВХОД: callback hook_ai_friend (из крючков)
+# ВХОД: callback hook_ai_friend (из крючков / «О боте»)
 # ============================================================
 @router.callback_query(F.data == "hook_ai_friend")
 async def cb_hook_ai_friend(callback: CallbackQuery, state: FSMContext):
@@ -421,8 +421,10 @@ async def handle_message(message: Message, state: FSMContext):
             return
         if reason == "ai_failed":
             await message.answer(
-                "😔 AI сейчас перегружен.\n\n"
-                "🔁 <b>Сообщение не потрачено.</b>"
+                "😔 <b>AI-друг немного задумался</b>\n\n"
+                "GigaChat сейчас отвечает медленнее обычного. "
+                "Попробуй ещё раз через минуту.\n\n"
+                "🔁 <b>Твоё сообщение не потрачено</b> — лимит в порядке."
             )
             return
         await message.answer("😔 Не получилось. Попробуй позже.")
