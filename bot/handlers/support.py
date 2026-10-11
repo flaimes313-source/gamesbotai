@@ -38,16 +38,7 @@ def support_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Написать в поддержку", callback_data="support_write")],
-            [InlineKeyboardButton(text="📖 FAQ", callback_data="support_faq")],
             [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")],
-        ]
-    )
-
-
-def faq_back_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="support_menu")],
         ]
     )
 
@@ -111,28 +102,6 @@ async def cb_support_write(callback: CallbackQuery):
         "✍️ Напиши свой вопрос одним сообщением — мы ответим в этом чате.\n\n"
         "Чтобы отменить — /cancel"
     )
-
-
-@router.callback_query(F.data == "support_faq")
-async def cb_support_faq(callback: CallbackQuery):
-    await callback.answer()
-    text = (
-        "📖 <b>FAQ</b>\n\n"
-        "<b>Как работает бот?</b>\n"
-        "Отправь фото — AI сделает смешной игровой профиль.\n\n"
-        "<b>Это правда анализ личности?</b>\n"
-        "Нет. Это развлекательная интерпретация вайба фото.\n\n"
-        "<b>Как найти других игроков?</b>\n"
-        "«🎯 Найти игроков» → выбери режим поиска.\n\n"
-        "<b>Как выйти из игры?</b>\n"
-        "«🎮 Социальная игра» → «Выйти из игры».\n\n"
-        "<b>Как удалить свои данные?</b>\n"
-        "Напиши в поддержку — удалим."
-    )
-    try:
-        await callback.message.edit_text(text, reply_markup=faq_back_kb())
-    except Exception:
-        await callback.message.answer(text, reply_markup=faq_back_kb())
 
 
 @router.message(F.text == "/cancel")
@@ -281,8 +250,8 @@ async def cb_admin_close(callback: CallbackQuery):
         ticket.status = "closed"
         ticket.admin_reply = None
         ticket.admin_id = callback.from_user.id
-        from datetime import datetime
-        ticket.closed_at = datetime.utcnow()
+        from datetime import datetime, timezone
+        ticket.closed_at = datetime.now(timezone.utc)
         await session.commit()
 
     # Убираем кнопку у админа, добавляем пометку
@@ -324,11 +293,11 @@ async def handle_admin_reply(message: Message):
             await message.answer("Тикет уже закрыт.")
             return
 
-        from datetime import datetime
+        from datetime import datetime, timezone
         ticket.admin_reply = reply_text
         ticket.admin_id = message.from_user.id
         ticket.status = "closed"
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = datetime.now(timezone.utc)
 
         user = (await session.execute(
             select(User).where(User.id == ticket.user_id)

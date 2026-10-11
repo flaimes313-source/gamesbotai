@@ -10,6 +10,10 @@ def info_menu_kb() -> InlineKeyboardMarkup:
                 callback_data="info_how_it_works",
             )],
             [InlineKeyboardButton(
+                text="🤖 AI-друг",
+                callback_data="info_ai_friend",
+            )],
+            [InlineKeyboardButton(
                 text="⭐ Очки и уровни",
                 callback_data="info_points",
             )],
@@ -76,6 +80,26 @@ def info_action_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(
                 text="⬅️ К разделам",
                 callback_data="info_menu",
+            )],
+        ]
+    )
+
+
+def info_ai_friend_kb() -> InlineKeyboardMarkup:
+    """Клавиатура под экраном про AI-друга."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🤖 Открыть AI-друга",
+                callback_data="hook_ai_friend",
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ К разделам",
+                callback_data="info_menu",
+            )],
+            [InlineKeyboardButton(
+                text="🏠 В главное меню",
+                callback_data="back_to_main",
             )],
         ]
     )

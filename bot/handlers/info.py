@@ -1,7 +1,12 @@
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
-from bot.keyboards.info import info_action_kb, info_back_kb, info_menu_kb
+from bot.keyboards.info import (
+    info_action_kb,
+    info_ai_friend_kb,
+    info_back_kb,
+    info_menu_kb,
+)
 from bot.keyboards.main import main_menu_kb
 from utils.logging import get_logger
 
@@ -18,6 +23,7 @@ async def info_from_menu(message: Message):
         "ℹ️ <b>О боте</b>\n\n"
         "Здесь всё, что нужно знать о Вайбми:\n\n"
         "🎯 Как работает — что делает бот\n"
+        "🤖 AI-друг — личный собеседник\n"
         "⭐ Очки и уровни — за что дают, как растут\n"
         "✨ Легендарные архетипы — редкая фича\n"
         "💎 Как получить PRO бесплатно\n"
@@ -37,6 +43,7 @@ async def info_menu_callback(callback: CallbackQuery):
         "ℹ️ <b>О боте</b>\n\n"
         "Здесь всё, что нужно знать о Вайбми:\n\n"
         "🎯 Как работает — что делает бот\n"
+        "🤖 AI-друг — личный собеседник\n"
         "⭐ Очки и уровни — за что дают, как растут\n"
         "✨ Легендарные архетипы — редкая фича\n"
         "💎 Как получить PRO бесплатно\n"
@@ -78,13 +85,53 @@ async def info_how_it_works(callback: CallbackQuery):
         "6️⃣ <b>Общайся</b>\n"
         "Находи игроков по вайбу, пиши, отправляй приколы, "
         "используй AI-помощник.\n\n"
-        "7️⃣ <b>Проходи тесты</b>\n"
+        "7️⃣ <b>Общайся с AI-другом</b>\n"
+        "Личный AI, который знает твой вайб и помнит вашу переписку. "
+        "Спрашивай совета, болтай, делись настроением.\n\n"
+        "8️⃣ <b>Проходи тесты</b>\n"
         "10 развлекательных тестов + сезонные события."
     )
     try:
         await callback.message.edit_text(text, reply_markup=info_back_kb())
     except Exception:
         await callback.message.answer(text, reply_markup=info_back_kb())
+
+
+# ============================================================
+# 🤖 AI-ДРУГ
+# ============================================================
+@router.callback_query(F.data == "info_ai_friend")
+async def info_ai_friend(callback: CallbackQuery):
+    await callback.answer()
+    text = (
+        "🤖 <b>AI-ДРУГ</b>\n\n"
+        "Личный AI-собеседник, который знает твой вайб.\n\n"
+        "<b>Что он умеет:</b>\n"
+        "• 💬 Болтать на любые темы\n"
+        "• 🤔 Помогать с вопросами и ситуациями\n"
+        "• 💡 Давать советы с учётом твоего характера\n"
+        "• 😄 Шутить в тему твоего архетипа\n"
+        "• 🧠 Помнить вашу переписку (30 дней)\n\n"
+        "<b>Как он работает:</b>\n"
+        "AI-друг видит твой <b>архетип</b>, <b>характеристики</b> "
+        "и <b>вайб</b>. Поэтому говорит с тобой «в тему», "
+        "а не как безликий чат-бот.\n\n"
+        "<b>История переписки:</b>\n"
+        "• Хранится <b>30 дней</b>\n"
+        "• Можно посмотреть кнопкой <b>📜 История</b>\n"
+        "• Можно очистить кнопкой <b>🗑 Очистить</b>\n"
+        "• Приватность: доступ к истории — только у тебя\n\n"
+        "<b>Лимиты:</b>\n"
+        "• 🆓 <b>Free:</b> 3 сообщения в день\n"
+        "• 💎 <b>PRO:</b> безлимит\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Открыть AI-друга можно в главном меню — "
+        "кнопка <b>🤖 AI-друг</b>."
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=info_ai_friend_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=info_ai_friend_kb())
 
 
 # ============================================================
@@ -295,6 +342,8 @@ async def info_pro_benefits(callback: CallbackQuery):
         "«Интеллектуальный соперник» и «Максимальный хаос»\n\n"
         "🤖 <b>AI-помощник в чатах</b>\n"
         "3 варианта ответа от AI + анализ переписки\n\n"
+        "🤖 <b>AI-друг без лимитов</b>\n"
+        "Безлимитное общение + полная история\n\n"
         "🚫 <b>Без рекламы</b>\n"
         "Никаких рекламных вставок\n\n"
         "🎁 <b>Без обязательных подписок</b>\n"
