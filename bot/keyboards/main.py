@@ -11,26 +11,32 @@ def main_menu_kb(is_pro: bool = False) -> ReplyKeyboardMarkup:
 
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(text="🎮 Социальная игра"),
-                KeyboardButton(text="🏆 Достижения"),
-            ],
-            [
-                KeyboardButton(text="🎯 Челлендж дня"),
-                KeyboardButton(text="🗓 Челлендж недели"),
-            ],
-            [
-                KeyboardButton(text="🧭 Квесты"),
-                KeyboardButton(text="🏆 Топы"),
-            ],
-            [
-                KeyboardButton(text="💎 PRO"),
-                KeyboardButton(text="🤖 AI-друг"),
-            ],
+            # 1
             [
                 KeyboardButton(text=profile_label),
-                KeyboardButton(text="⚙️ Настройки"),
+                KeyboardButton(text="🤖 AI-друг"),
             ],
+            # 2
+            [
+                KeyboardButton(text="⚙️ Настройки"),
+                KeyboardButton(text="🎯 Челлендж дня"),
+            ],
+            # 3
+            [
+                KeyboardButton(text="🎮 Социальная игра"),
+                KeyboardButton(text="🗓 Челлендж недели"),
+            ],
+            # 4
+            [
+                KeyboardButton(text="🏆 Топы"),
+                KeyboardButton(text="🧭 Квесты"),
+            ],
+            # 5
+            [
+                KeyboardButton(text="🏅 Достижения"),
+                KeyboardButton(text="💎 PRO"),
+            ],
+            # 6 — О боте
             [
                 KeyboardButton(text="ℹ️ О боте"),
             ],

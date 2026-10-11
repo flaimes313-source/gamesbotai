@@ -9,10 +9,12 @@ from services.achievements import list_user_achievements
 router = Router()
 
 
-@router.message(F.text == "🏆 Достижения")
+@router.message(F.text == "🏅 Достижения")
 async def show_achievements(message: Message):
     async with async_session() as session:
-        user = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
+        user = (await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id)
+        )).scalar_one_or_none()
 
     if user is None:
         await message.answer("Сначала пройди анализ!")
@@ -20,10 +22,10 @@ async def show_achievements(message: Message):
 
     achievements = await list_user_achievements(user.id)
     if not achievements:
-        await message.answer("🏆 Пока нет достижений. Отправь фото и поделись результатом!")
+        await message.answer("🏅 Пока нет достижений. Отправь фото и поделись результатом!")
         return
 
-    lines = ["🏆 <b>Мои достижения</b>\n"]
+    lines = ["🏅 <b>Мои достижения</b>\n"]
     for a in achievements:
         lines.append(f"{a.emoji} <b>{a.title}</b> — {a.description}")
     await message.answer("\n".join(lines))
