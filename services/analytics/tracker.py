@@ -86,6 +86,9 @@ EVENT_NAMES = {
     # Этап E — «Выбрать лучшее фото»
     "best_photo_viewed",
 
+    # Этап F — «AI-друг»
+    "ai_friend_started", "ai_friend_message", "ai_friend_exited",
+
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
 }

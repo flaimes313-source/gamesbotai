@@ -2761,3 +2761,64 @@ Reward-файлы: порядок user → claim_reward → grant_pro_days.
 ### Что дальше
 
 **Этап E** — «Выбрать лучшее фото» (3 фото → победитель + разбивка по целям). Крючок `hook_best_photo` — пока заглушка.
+---
+
+## 34. ЭТАП E — «ВЫБРАТЬ ЛУЧШЕЕ ФОТО» (2026-10-11)
+
+### Кратко
+
+Юзер жмёт **🏆 Выбрать лучшее фото** → FSM (3 фото по одному) → AI выбирает лучшее.
+**Free:** 1/день (`RewardClaim best_photo_YYYY-MM-DD`), только победитель + short_reason.
+**Pro:** безлимит + `why_winner` / `why_others` + разбивка по целям (Telegram / знакомства / деловой).
+**Фолбэк:** AI упал → лимит Free **не тратится**.
+
+### Новые файлы
+
+| Файл | Назначение |
+|---|---|
+| `prompts/best_photo.py` | `BEST_PHOTO_PROMPT` (JSON: score_1/2/3, winner, short_reason, why_winner, why_others, best_for_telegram/dating/business) |
+| `services/analysis/best_photo.py` | `_check_limit`, `_mark_used`, `_collect_profile_data`, `generate_best_photo_for_user`, `format_best_photo` |
+| `bot/handlers/best_photo.py` | FSM `best_photo_1` → `best_photo_2` → `best_photo_3` + `/cancel` (StateFilter на состояния) |
+
+### Изменённые файлы
+
+| Файл | Что |
+|---|---|
+| `services/ai/base.py` | + `generate_best_photo(image_1_bytes, image_2_bytes, image_3_bytes, profile_data)` |
+| `services/ai/gigachat.py` | + импорт `BEST_PHOTO_PROMPT`, + метод `generate_best_photo` (3 вложения в одном Vision-запросе) |
+| `bot/handlers/vibe_hooks.py` | `cb_hook_best_photo` → запуск FSM вместо заглушки; `best_photo` убран из `HOOK_TEXTS` |
+| `bot/handlers/__init__.py` | + `best_photo.router` **выше** `analysis.router` (рядом с `photo_battle.router`) |
+| `services/analytics/tracker.py` | + событие `best_photo_viewed` |
+
+### ⚠️ Ключевое правило
+
+**FSM-хендлеры с фото регистрируются ВЫШЕ общих.** У `analysis.handle_photo` стоит `StateFilter(None)` — иначе он перехватывает фото из FSM. При добавлении новых FSM-сценариев с фото — регистрировать **до** `analysis.router`.
+
+### Константы
+
+| Где | Что | Значение |
+|---|---|---|
+| `services/analysis/best_photo.py` | `FREE_DAILY_LIMIT` | 1 |
+
+### Событие
+
+| Событие | Payload |
+|---|---|
+| `best_photo_viewed` | `{is_pro, allowed, reason, winner}` |
+
+### History проблем
+
+| Проблема | Решение |
+|---|---|
+| Фото в FSM уходило в обычный анализ | `best_photo.router` выше `analysis.router` + `StateFilter(None)` в `handle_photo` |
+| `/cancel` мог конфликтовать | `StateFilter("best_photo_1", "best_photo_2", "best_photo_3")` на `/cancel` |
+| Лимит тратился при ошибке AI | `_mark_used` только после успешного ответа AI |
+| Юзер прислал 1-2 фото и молчит | Никаких таймеров: после каждого фото пишем «N/3», ждём 3-е |
+
+### Точка отката
+
+Заменить `cb_hook_best_photo` в `vibe_hooks.py` на заглушку (или убрать кнопку из `first_analysis_kb`).
+
+### Что дальше
+
+**Этап F** — «AI-друг» (личный AI, знающий Vibe-профиль). Free: 3 сообщения, Pro: безлимит. Крючок `hook_ai_friend` — пока заглушка.

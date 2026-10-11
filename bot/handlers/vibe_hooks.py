@@ -1,12 +1,12 @@
 """
-Крючки после анализа (Этап A + B + C + D + E).
+Крючки после анализа (Этап A + B + C + D + E + F).
 
 Этап A: показ раз в 3 дня + кнопка «🔥 Что ещё?».
 Этап B: «Какой ты сегодня?» — AI.
 Этап C: «Что обо мне думают?» — AI.
 Этап D: «Сравнение 2 фото» — FSM.
 Этап E: «Выбрать лучшее фото» — FSM.
-Заглушка: F — «AI-друг».
+Этап F: «AI-друг» — FSM-режим.
 """
 
 from aiogram import F, Router
@@ -23,73 +23,9 @@ router = Router()
 logger = get_logger(__name__)
 
 
-# ============================================================
-# ЗАГЛУШКА F (AI-друг)
-# ============================================================
-HOOK_TEXTS = {
-    "ai_friend": {
-        "title": "🤖 AI-друг",
-        "text": (
-            "🤖 <b>AI-друг</b>\n\n"
-            "Личный AI, который знает твой вайб.\n\n"
-            "Он понимает:\n"
-            "• как ты выглядишь\n"
-            "• какой у тебя характер\n"
-            "• что тебе подходит\n\n"
-            "Обсуждай ситуации, спрашивай совета, "
-            "разбирай отношения.\n\n"
-            "🛠 <b>Скоро в Вайбми.</b>"
-        ),
-    },
-}
-
-
-def _back_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🔥 Что ещё?",
-                callback_data="hook_menu",
-            )],
-            [InlineKeyboardButton(
-                text="🏠 В главное меню",
-                callback_data="back_to_main",
-            )],
-        ]
-    )
-
-
 def _menu_kb() -> InlineKeyboardMarkup:
     from bot.keyboards.main import first_analysis_kb
     return first_analysis_kb()
-
-
-# ============================================================
-# ОБЩИЙ ОБРАБОТЧИК ЗАГЛУШЕК
-# ============================================================
-async def _handle_hook(callback: CallbackQuery, hook_key: str) -> None:
-    await callback.answer()
-
-    hook = HOOK_TEXTS.get(hook_key)
-    if not hook:
-        return
-
-    try:
-        await callback.message.answer(
-            hook["text"],
-            reply_markup=_back_kb(),
-        )
-    except Exception:
-        logger.exception(f"[HOOK] failed to send {hook_key}")
-
-    try:
-        await track(
-            "hook_clicked",
-            telegram_id=callback.from_user.id,
-            payload={"hook": hook_key},
-        )
-    except Exception:
-        logger.exception("[HOOK] track failed")
 
 
 # ============================================================
@@ -317,11 +253,75 @@ async def cb_hook_best_photo(callback: CallbackQuery, state: FSMContext):
 
 
 # ============================================================
-# ЗАГЛУШКА F — AI-друг (пока не реализован)
+# ЭТАП F — «AI-друг» (FSM-режим)
 # ============================================================
 @router.callback_query(F.data == "hook_ai_friend")
-async def cb_hook_ai_friend(callback: CallbackQuery):
-    await _handle_hook(callback, "ai_friend")
+async def cb_hook_ai_friend(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+    if user is None:
+        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
+        return
+
+    from services.analysis.ai_friend import (
+        check_ai_friend_limit,
+        collect_profile_data,
+    )
+    allowed, is_pro, remaining = await check_ai_friend_limit(
+        user.id, callback.from_user.id
+    )
+    if not allowed:
+        await callback.message.answer(
+            "🤖 <b>AI-друг</b>\n\n"
+            "На сегодня сообщения закончились.\n\n"
+            "💎 <b>С Pro — безлимит.</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Pro", callback_data="pro_menu")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_main")],
+            ]),
+        )
+        return
+
+    profile_data = await collect_profile_data(user.id)
+    if profile_data is None:
+        await callback.message.answer("Сначала отправь фото — я должен знать твой вайб!")
+        return
+
+    from prompts.ai_friend import AI_FRIEND_FIRST_MESSAGE
+    first_text = AI_FRIEND_FIRST_MESSAGE.format(
+        user_name=profile_data.get("user_name", "Игрок"),
+        archetype=profile_data.get("archetype", "загадочный тип"),
+    )
+
+    await state.set_state("ai_friend_active")
+    await state.update_data(user_id=user.id, history=[])
+
+    try:
+        await callback.message.answer(
+            first_text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🚪 Выйти из чата",
+                    callback_data="ai_friend_exit",
+                )],
+            ]),
+        )
+    except Exception:
+        logger.exception("[AI_FRIEND] first message failed")
+
+    try:
+        await track(
+            "ai_friend_started",
+            telegram_id=callback.from_user.id,
+            payload={"is_pro": is_pro, "remaining": remaining},
+        )
+    except Exception:
+        logger.exception("[AI_FRIEND] track started failed")
 
 
 # ============================================================

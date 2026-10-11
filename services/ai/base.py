@@ -208,3 +208,37 @@ class AIProvider(ABC):
             }
         """
         ...
+
+    # --------------------------------------------------------
+    # «AI-друг» (Этап F)
+    # --------------------------------------------------------
+    @abstractmethod
+    async def generate_ai_friend_reply(
+        self,
+        profile_data: Dict[str, Any],
+        history: List[Dict[str, str]],
+        user_message: str,
+    ) -> str:
+        """
+        Генерирует ответ AI-друга.
+
+        profile_data:
+            {
+                "user_name": str,
+                "archetype": str,
+                "vibe": str,
+                "charisma": int,
+                "confidence": int,
+                "humor": int,
+                "energy": int,
+                "sociability": int,
+                "chaos": int,
+                "recent_archetypes": list[str],
+            }
+
+        history: список последних сообщений
+            [{"role": "user"|"assistant", "text": str}, ...]
+
+        Возвращает: строку ответа.
+        """
+        ...

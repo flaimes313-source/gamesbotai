@@ -10,6 +10,7 @@ from bot.handlers import (
     vibe_hooks,
     photo_battle,
     best_photo,
+    ai_friend,
     matching,
     compare,
     tests,
@@ -41,15 +42,18 @@ def register_handlers(root_router: Router) -> None:
     # 2. Пользовательские
     root_router.include_router(start.router)
 
-    # ⚔️ FSM-хендлеры — ВЫШЕ общих, чтобы фото в состоянии ловились ими, а не analysis
+    # FSM-хендлеры — ВЫШЕ общих
     root_router.include_router(photo_battle.router)
     root_router.include_router(best_photo.router)
 
+    # ⚠️ ai_friend.router — ПОСЛЕ всех callback-крючков (vibe_hooks),
+    # но ДО catch-all (messaging/support). Ловит только F.text в своём состоянии.
     root_router.include_router(analysis.router)
     root_router.include_router(profile.router)
     root_router.include_router(vibe_report.router)
     root_router.include_router(compatibility.router)
     root_router.include_router(vibe_hooks.router)
+    root_router.include_router(ai_friend.router)
     root_router.include_router(settings_notifications.router)
     root_router.include_router(timezone.router)
     root_router.include_router(engagement.router)

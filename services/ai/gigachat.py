@@ -8,6 +8,7 @@ from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
 
 from config import config
+from prompts.ai_friend import AI_FRIEND_SYSTEM_PROMPT
 from prompts.best_photo import BEST_PHOTO_PROMPT
 from prompts.chat_helper import CHAT_ANALYSIS_PROMPT, CHAT_REPLY_PROMPT
 from prompts.compatibility import COMPATIBILITY_PROMPT
@@ -625,7 +626,6 @@ class GigaChatProvider(AIProvider):
         image_2_bytes: bytes,
         profile_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        # Загружаем оба фото
         file_1 = await self._upload_image(image_1_bytes, "photo_1")
         file_2 = await self._upload_image(image_2_bytes, "photo_2")
 
@@ -669,7 +669,6 @@ class GigaChatProvider(AIProvider):
         image_3_bytes: bytes,
         profile_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        # Загружаем три фото
         file_1 = await self._upload_image(image_1_bytes, "photo_1")
         file_2 = await self._upload_image(image_2_bytes, "photo_2")
         file_3 = await self._upload_image(image_3_bytes, "photo_3")
@@ -704,3 +703,60 @@ class GigaChatProvider(AIProvider):
         )
         logger.info(f"[BEST_PHOTO] raw: {raw[:300]}")
         return _extract_json(raw)
+
+    # --------------------------------------------------------
+    # AI-друг (Этап F)
+    # --------------------------------------------------------
+    async def generate_ai_friend_reply(
+        self,
+        profile_data: Dict[str, Any],
+        history: List[Dict[str, str]],
+        user_message: str,
+    ) -> str:
+        if history:
+            lines = []
+            for m in history[-8:]:
+                prefix = "Ты:" if m.get("role") == "user" else "AI:"
+                lines.append(f"{prefix} {m.get('text', '')}")
+            history_text = "\n".join(lines)
+        else:
+            history_text = "(пока пусто)"
+
+        recent = profile_data.get("recent_archetypes") or []
+        if recent:
+            recent_text = "\n".join(f"- {a}" for a in recent[:3])
+        else:
+            recent_text = "(нет)"
+
+        prompt = AI_FRIEND_SYSTEM_PROMPT.format(
+            user_name=profile_data.get("user_name", "Игрок"),
+            archetype=profile_data.get("archetype", ""),
+            vibe=profile_data.get("vibe", ""),
+            charisma=profile_data.get("charisma", 0),
+            confidence=profile_data.get("confidence", 0),
+            humor=profile_data.get("humor", 0),
+            energy=profile_data.get("energy", 0),
+            sociability=profile_data.get("sociability", 0),
+            chaos=profile_data.get("chaos", 0),
+            recent_archetypes=recent_text,
+            history=history_text,
+        )
+
+        messages = [
+            Messages(role=MessagesRole.SYSTEM, content=prompt),
+            Messages(role=MessagesRole.USER, content=user_message),
+        ]
+
+        raw = await self._chat(
+            messages,
+            temperature=0.9,
+            max_tokens=350,
+            timeout=DEFAULT_CHAT_TIMEOUT,
+        )
+
+        text = (raw or "").strip()
+        text = re.sub(r"^```[a-z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+        logger.info(f"[AI_FRIEND] raw len={len(text)}")
+        return text
