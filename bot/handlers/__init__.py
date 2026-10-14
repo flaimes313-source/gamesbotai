@@ -32,6 +32,7 @@ from bot.handlers import (
 )
 from admin import handlers as admin_handlers
 from admin.broadcast import router as broadcast_router
+from admin.dm import router as admin_dm_router
 from admin.subscriptions_wizard import router as subs_wizard_router
 
 
@@ -40,11 +41,12 @@ def register_handlers(root_router: Router) -> None:
     root_router.include_router(admin_handlers.router)
     root_router.include_router(subs_wizard_router)
     root_router.include_router(broadcast_router)
+    root_router.include_router(admin_dm_router)
 
     # 2. Пользовательские
     root_router.include_router(start.router)
 
-    # FSM-хендлеры — ВЫШЕ общих
+    # FSM-хендлеры — ВЫШЕ общих (StateFilter)
     root_router.include_router(photo_battle.router)
     root_router.include_router(best_photo.router)
 

@@ -96,6 +96,9 @@ EVENT_NAMES = {
     # Приватность / удаление данных
     "account_data_deleted", "account_delete_cancelled",
 
+    # Админ: личные сообщения
+    "admin_dm_sent",
+
     # Старые события (для совместимости)
     "message_sent", "joke_sent", "inbox_viewed",
 }

@@ -33,6 +33,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="📨 Рассылка", callback_data="adm_broadcast"),
+                InlineKeyboardButton(text="✉️ Личное сообщение", callback_data="adm_dm"),
             ],
         ]
     )
@@ -332,5 +333,122 @@ def broadcast_confirm_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Отправить всем", callback_data="bc_confirm")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="bc_cancel")],
+        ]
+    )
+
+
+# ============================================================
+# ЛИЧНОЕ СООБЩЕНИЕ (DM)
+# ============================================================
+def dm_user_search_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📋 Последние 20",
+                callback_data="dm_show_last",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="dm_cancel",
+            )],
+        ]
+    )
+
+
+def dm_user_list_kb(users: list) -> InlineKeyboardMarkup:
+    rows = []
+    for u in users:
+        uname = f"@{u.username}" if u.username else f"id{u.id}"
+        label = f"#{u.id} {u.first_name or '—'} ({uname})"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"dm_pick_{u.id}",
+        )])
+
+    rows.append([InlineKeyboardButton(
+        text="⬅️ Назад к поиску",
+        callback_data="dm_back_to_user",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data="dm_cancel",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dm_user_card_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Другой юзер",
+                callback_data="dm_back_to_user",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="dm_cancel",
+            )],
+        ]
+    )
+
+
+def dm_content_type_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✍️ Только текст",
+                callback_data="dm_type_text",
+            )],
+            [InlineKeyboardButton(
+                text="🔗 Текст + ссылка на чек",
+                callback_data="dm_type_text_link",
+            )],
+            [InlineKeyboardButton(
+                text="🖼 Текст + фото чека",
+                callback_data="dm_type_text_photo",
+            )],
+            [InlineKeyboardButton(
+                text="📄 PDF-файл",
+                callback_data="dm_type_pdf",
+            )],
+            [InlineKeyboardButton(
+                text="📄 PDF + подпись",
+                callback_data="dm_type_pdf_caption",
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Другой юзер",
+                callback_data="dm_back_to_user",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="dm_cancel",
+            )],
+        ]
+    )
+
+
+def dm_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="dm_cancel",
+            )],
+        ]
+    )
+
+
+def dm_preview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🚀 Отправить",
+                callback_data="dm_confirm",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="dm_cancel",
+            )],
         ]
     )
