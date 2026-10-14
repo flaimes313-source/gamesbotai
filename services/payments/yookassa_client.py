@@ -3,6 +3,12 @@
 
 ВАЖНО: SDK YooKassa синхронный. Все вызовы оборачиваем в asyncio.to_thread,
 чтобы не блокировать event loop бота.
+
+⚠️ РЕКУРРЕНТЫ: save_payment_method=True требует разрешения от ЮKassa
+(«Хочу подключить рекуррентные платежи»). Без одобрения запрос падает с:
+    ForbiddenError: This store can't make recurring payments.
+Поэтому здесь используется ОБЫЧНЫЙ одноразовый платёж — без сохранения карты.
+Когда ЮKassa одобрит рекурренты — вернём save_payment_method=True.
 """
 
 import asyncio
@@ -53,7 +59,7 @@ async def create_pro_payment(
         }
 
     ВАЖНО:
-    - save_payment_method=True — на будущее для автопродления.
+    - Одноразовый платёж (без save_payment_method).
     - metadata.user_id — webhook по нему найдёт юзера.
     """
     _init()
@@ -71,7 +77,8 @@ async def create_pro_payment(
             "return_url": return_url,
         },
         "capture": True,
-        "save_payment_method": True,
+        # ⚠️ save_payment_method НЕ ставим — иначе ForbiddenError
+        # на магазинах без одобренных рекуррентов.
         "description": description,
         "metadata": {
             "user_id": user_id,
